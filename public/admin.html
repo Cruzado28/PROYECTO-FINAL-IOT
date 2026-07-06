@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Parking IoT — Sistema Inteligente de Gestión</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="stylesheet" href="/assets/css/admin.css">
+</head>
+<body>
+<div id="app">
+
+<!-- ========== LOGIN ========== -->
+<div id="login-screen">
+  <div class="login-left">
+    <div class="login-grid"></div>
+    <!-- SVG illustration -->
+    <svg width="320" height="220" viewBox="0 0 320 220" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:24px;position:relative">
+      <rect x="20" y="60" width="280" height="140" rx="12" fill="rgba(79,142,247,0.08)" stroke="rgba(79,142,247,0.25)" stroke-width="1.5"/>
+      <!-- Parking spots grid -->
+      <rect x="36" y="76" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="90" y="76" width="48" height="28" rx="4" fill="rgba(239,68,68,0.15)" stroke="rgba(239,68,68,0.5)" stroke-width="1.2"/>
+      <rect x="144" y="76" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="198" y="76" width="48" height="28" rx="4" fill="rgba(245,158,11,0.15)" stroke="rgba(245,158,11,0.5)" stroke-width="1.2"/>
+      <rect x="252" y="76" width="38" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <!-- Car icon in occupied spot -->
+      <path d="M100 88 h28 l4 8 H96l4-8z" fill="rgba(239,68,68,0.6)" rx="2"/>
+      <rect x="99" y="96" width="30" height="4" rx="1" fill="rgba(239,68,68,0.4)"/>
+      <!-- Car in amber spot -->
+      <path d="M208 88 h28 l4 8 H204l4-8z" fill="rgba(245,158,11,0.6)" rx="2"/>
+      <rect x="207" y="96" width="30" height="4" rx="1" fill="rgba(245,158,11,0.4)"/>
+      <!-- Row 2 -->
+      <rect x="36" y="116" width="48" height="28" rx="4" fill="rgba(239,68,68,0.15)" stroke="rgba(239,68,68,0.5)" stroke-width="1.2"/>
+      <rect x="90" y="116" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="144" y="116" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="198" y="116" width="48" height="28" rx="4" fill="rgba(239,68,68,0.15)" stroke="rgba(239,68,68,0.5)" stroke-width="1.2"/>
+      <rect x="252" y="116" width="38" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <path d="M46 128 h28 l4 8 H42l4-8z" fill="rgba(239,68,68,0.6)"/>
+      <rect x="45" y="136" width="30" height="4" rx="1" fill="rgba(239,68,68,0.4)"/>
+      <path d="M208 128 h28 l4 8 H204l4-8z" fill="rgba(239,68,68,0.6)"/>
+      <rect x="207" y="136" width="30" height="4" rx="1" fill="rgba(239,68,68,0.4)"/>
+      <!-- Row 3 -->
+      <rect x="36" y="156" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="90" y="156" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="144" y="156" width="48" height="28" rx="4" fill="rgba(239,68,68,0.15)" stroke="rgba(239,68,68,0.5)" stroke-width="1.2"/>
+      <rect x="198" y="156" width="48" height="28" rx="4" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.5)" stroke-width="1.2"/>
+      <rect x="252" y="156" width="38" height="28" rx="4" fill="rgba(90,97,117,0.15)" stroke="rgba(90,97,117,0.5)" stroke-width="1.2"/>
+      <path d="M154 168 h28 l4 8 H150l4-8z" fill="rgba(239,68,68,0.6)"/>
+      <rect x="153" y="176" width="30" height="4" rx="1" fill="rgba(239,68,68,0.4)"/>
+      <!-- IoT nodes -->
+      <circle cx="20" cy="40" r="5" fill="rgba(79,142,247,0.6)"/>
+      <circle cx="80" cy="25" r="5" fill="rgba(79,142,247,0.6)"/>
+      <circle cx="160" cy="15" r="5" fill="rgba(79,142,247,0.6)"/>
+      <circle cx="240" cy="25" r="5" fill="rgba(79,142,247,0.6)"/>
+      <circle cx="300" cy="40" r="5" fill="rgba(79,142,247,0.6)"/>
+      <path d="M20 40 L80 25 L160 15 L240 25 L300 40" stroke="rgba(79,142,247,0.4)" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+      <!-- WiFi symbols -->
+      <text x="155" y="12" font-size="8" fill="rgba(79,142,247,0.8)" font-family="monospace">WiFi</text>
+      <text x="30" y="55" font-size="9" fill="rgba(34,197,94,0.7)" font-family="monospace">RFID</text>
+      <text x="270" y="55" font-size="9" fill="rgba(79,142,247,0.7)" font-family="monospace">ESP32</text>
+    </svg>
+    <h2 style="font-size:22px;font-weight:700;color:#fff;margin-bottom:8px;text-align:center">Sistema Inteligente de Estacionamiento</h2>
+    <p style="color:rgba(255,255,255,0.45);font-size:13px;text-align:center;max-width:300px;line-height:1.6">Monitoreo IoT en tiempo real · Gestión de accesos · Análisis de ocupación</p>
+    <div style="display:flex;gap:16px;margin-top:28px">
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:#4f8ef7">10</div><div style="font-size:11px;color:rgba(255,255,255,0.4)">Espacios</div></div>
+      <div style="width:1px;background:rgba(255,255,255,0.1)"></div>
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:#22c55e">10%</div><div style="font-size:11px;color:rgba(255,255,255,0.4)">Disponible</div></div>
+      <div style="width:1px;background:rgba(255,255,255,0.1)"></div>
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:#f59e0b">8</div><div style="font-size:11px;color:rgba(255,255,255,0.4)">Sensores</div></div>
+    </div>
+  </div>
+  <div class="login-right">
+    <div class="login-logo"><i class="fa-solid fa-square-parking"></i></div>
+    <h1 class="login-title">Smart Parking IoT</h1>
+    <p class="login-sub">Centro Comercial · Panel Administrativo</p>
+    <div class="login-input-wrap">
+      <input class="login-input" id="login-user" type="text" placeholder="Usuario" autocomplete="username"/>
+      <i class="fa-solid fa-user login-input-icon"></i>
+    </div>
+    <div class="login-input-wrap">
+      <input class="login-input" id="login-pass" type="password" placeholder="Contraseña" autocomplete="current-password"/>
+      <i class="fa-solid fa-eye login-input-icon" onclick="togglePass(this)" style="cursor:pointer"></i>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:16px">
+      <label class="login-check"><input type="checkbox" checked style="accent-color:var(--accent)"/> Recordar sesión</label>
+      <span style="font-size:12px;color:var(--accent);cursor:pointer">¿Olvidaste tu contraseña?</span>
+    </div>
+    <button class="login-btn" onclick="doLogin()">Iniciar Sesión</button>
+    <div id="login-err" style="margin-top:12px;font-size:12px;color:var(--red);display:none">Usuario o contraseña incorrectos.</div>
+    <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);width:100%;text-align:center;font-size:11px;color:var(--text-muted)">Smart Parking IoT v2.1.0 · © 2026</div>
+  </div>
+</div>
+
+<!-- ========== MAIN LAYOUT ========== -->
+<div id="main-layout" style="display:none;width:100%">
+
+<!-- SIDEBAR -->
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-icon"><i class="fa-solid fa-square-parking" style="font-size:18px"></i></div>
+    <div class="sidebar-logo-text">Smart Parking<span>IoT Management</span></div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="sidebar-section-title">Principal</div>
+    <div class="nav-item active" onclick="navigateTo('dashboard',this)"><i class="fa-solid fa-table-cells-large"></i><span class="nav-label">Dashboard</span></div>
+    <div class="nav-item" onclick="navigateTo('sensors',this)"><i class="fa-solid fa-microchip"></i><span class="nav-label">Sensores en Vivo</span></div>
+    <div class="nav-item" onclick="navigateTo('monitor',this)"><i class="fa-solid fa-camera"></i><span class="nav-label">Monitoreo en Tiempo Real</span></div>
+    <div class="nav-item" onclick="navigateTo('vehicles',this)"><i class="fa-solid fa-car"></i><span class="nav-label">Vehículos</span></div>
+    <div class="nav-item" onclick="navigateTo('history',this)"><i class="fa-solid fa-chart-line"></i><span class="nav-label">Historial y Reportes</span></div>
+    <div class="sidebar-section-title">Configuración</div>
+    <div class="nav-item" onclick="navigateTo('tariffs',this)"><i class="fa-solid fa-ticket"></i><span class="nav-label">Tarifas y Beneficios</span></div>
+    <div class="nav-item" onclick="navigateTo('settings',this)"><i class="fa-solid fa-gear"></i><span class="nav-label">Configuración</span></div>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="sidebar-user" onclick="navigateTo('settings',document.querySelector('.nav-item:last-child'))">
+      <div class="user-avatar">AD</div>
+      <div class="sidebar-user-info"><div class="name">Admin Central</div><div class="role">Super Administrador</div></div>
+    </div>
+    <div class="nav-item" onclick="doLogout()" style="margin-top:4px"><i class="fa-solid fa-right-from-bracket"></i><span class="nav-label">Cerrar Sesión</span></div>
+  </div>
+</aside>
+
+<!-- CONTENT -->
+<div id="content-area">
+  <header id="header">
+    <div class="header-toggle" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></div>
+    <nav class="breadcrumbs" id="breadcrumbs">
+      <span>Smart Parking IoT</span><span class="sep">›</span><span class="current">Dashboard</span>
+    </nav>
+    <div class="header-right">
+      <div class="header-btn" onclick="showToast('info','Sistema sincronizado correctamente','fa-rotate')"><i class="fa-solid fa-rotate"></i></div>
+      <div class="header-btn"><i class="fa-solid fa-bell"></i><span class="dot"></span></div>
+      <div class="theme-toggle" onclick="toggleTheme()">
+        <i class="fa-solid fa-moon" id="theme-moon" style="font-size:14px;padding:3px;border-radius:50%"></i>
+        <i class="fa-solid fa-sun" id="theme-sun" class="active-mode" style="font-size:14px;padding:3px;border-radius:50%;background:var(--accent);color:#fff"></i>
+      </div>
+      <div class="user-avatar" style="width:30px;height:30px;font-size:11px;cursor:pointer">AD</div>
+    </div>
+  </header>
+  <div id="content-scroll">
+
+    <!-- ======== PAGE: DASHBOARD ======== -->
+    <div class="page active" id="page-dashboard">
+      <section class="integrated-view-block" aria-label="Dashboard moderno en tiempo real">
+        <div class="integrated-view-heading">
+          <div>
+            <h2><i class="fa-solid fa-gauge-high" style="color:var(--accent);margin-right:7px"></i>Panel principal en tiempo real</h2>
+            <p>Ocupación, espacios, vehículos y cámara conectados con la base de datos.</p>
+          </div>
+        </div>
+        <div class="integrated-frame-shell" id="dashboard-frame-shell">
+          <div class="integrated-loading" id="dashboard-frame-loading"><i class="fa-solid fa-spinner fa-spin"></i> Cargando dashboard…</div>
+          <iframe
+            id="dashboard-modern-frame"
+            class="integrated-frame"
+            title="Dashboard principal Smart Parking"
+            data-src="/panel-iot.html?embed=dashboard"
+            hidden
+          ></iframe>
+        </div>
+      </section>
+      <div class="legacy-dashboard-divider"><span>Analítica complementaria y exportación</span></div>
+      <div class="section-hd" style="margin-bottom:16px">
+        <div><div class="section-title">Dashboard Ejecutivo</div><div class="section-sub">Visión general del sistema · Actualizado hace 2 minutos</div></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm"><i class="fa-solid fa-calendar"></i> Hoy</button>
+          <button class="btn btn-primary btn-sm" id="dashboard-exportar-btn" onclick="exportarDashboardPDF()"><i class="fa-solid fa-download"></i> Exportar PDF</button>
+        </div>
+      </div>
+      <!-- KPI Grid -->
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--accent-glow);color:var(--accent)"><i class="fa-solid fa-square-parking"></i></div><div class="kpi-label">Espacios Totales</div><div class="kpi-value">10</div><div class="kpi-trend up"><i class="fa-solid fa-arrow-up" style="font-size:10px"></i>100%</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--red-bg);color:var(--red)"><i class="fa-solid fa-warehouse"></i></div><div class="kpi-label">Espacios Ocupados</div><div class="kpi-value">8</div><div class="kpi-trend down"><i class="fa-solid fa-arrow-up" style="font-size:10px"></i>80%</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--green-bg);color:var(--green)"><i class="fa-solid fa-circle-check"></i></div><div class="kpi-label">Espacios Disponibles</div><div class="kpi-value">1</div><div class="kpi-trend up"><i class="fa-solid fa-arrow-up" style="font-size:10px"></i>10%</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--teal-bg);color:var(--teal)"><i class="fa-solid fa-users"></i></div><div class="kpi-label">Vehículos Activos</div><div class="kpi-value">8</div><div class="kpi-sub">En estacionamiento ahora</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--green-bg);color:var(--green)"><i class="fa-solid fa-dollar-sign"></i></div><div class="kpi-label">Ingresos del Día</div><div class="kpi-value">S/ 1,847</div><div class="kpi-trend up"><i class="fa-solid fa-arrow-up" style="font-size:10px"></i>+12.4%</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--purple-bg);color:var(--purple)"><i class="fa-solid fa-clock"></i></div><div class="kpi-label">Tiempo Promedio</div><div class="kpi-value">1h 42m</div><div class="kpi-sub">Permanencia promedio</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><i class="fa-solid fa-star"></i></div><div class="kpi-label">Horas Exoneradas</div><div class="kpi-value">184h</div><div class="kpi-sub">Este mes</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--teal-bg);color:var(--teal)"><i class="fa-solid fa-tag"></i></div><div class="kpi-label">Descuentos Aplicados</div><div class="kpi-value">S/ 320</div><div class="kpi-sub">23 aplicaciones hoy</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--purple-bg);color:var(--purple)"><i class="fa-solid fa-crown"></i></div><div class="kpi-label">Usuarios VIP</div><div class="kpi-value">18</div><div class="kpi-trend up"><i class="fa-solid fa-arrow-up" style="font-size:10px"></i>+3 este mes</div></div>
+        <div class="kpi-card"><div class="kpi-icon" style="background:var(--accent-glow);color:var(--accent)"><i class="fa-solid fa-receipt"></i></div><div class="kpi-label">Consumo Registrado</div><div class="kpi-value">S/ 14,290</div><div class="kpi-sub">Total del día</div></div>
+      </div>
+
+      <!-- Cuatro gráficas: dos por fila -->
+      <div class="dashboard-charts-grid" aria-label="Gráficas del dashboard ejecutivo">
+        <div class="chart-card">
+          <div class="chart-card-hd"><div><div class="chart-title">Ocupación por Hora</div><div class="chart-sub">Vehículos presentes por hora del día</div></div></div>
+          <div class="dashboard-chart-body"><canvas id="chart-hourly" role="img" aria-label="Ocupación por hora">Datos de ocupación por hora.</canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-hd"><div><div class="chart-title">Ingresos por Día</div><div class="chart-sub">Últimos 7 días en soles</div></div></div>
+          <div class="dashboard-chart-body"><canvas id="chart-income" role="img" aria-label="Ingresos por día">Ingresos diarios.</canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-hd"><div><div class="chart-title">Vehículos por Tipo</div><div class="chart-sub">Distribución de vehículos registrados</div></div></div>
+          <div class="dashboard-chart-body"><canvas id="chart-types" role="img" aria-label="Vehículos por tipo">Distribución por tipo.</canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-hd"><div><div class="chart-title">Uso de Beneficios</div><div class="chart-sub">Roles, descuentos y exoneraciones aplicadas</div></div></div>
+          <div class="dashboard-chart-body"><canvas id="chart-benefits" role="img" aria-label="Uso de beneficios">Beneficios aplicados.</canvas></div>
+        </div>
+      </div>
+
+      <!-- Eventos y rankings: una sola fila -->
+      <div class="dashboard-bottom-grid">
+        <div class="chart-card dashboard-info-card">
+          <div class="chart-card-hd" style="margin-bottom:10px"><div class="chart-title">Eventos Recientes</div><span class="badge badge-green"><span class="status-dot dot-green" style="margin:0;width:5px;height:5px;display:inline-block"></span>Live</span></div>
+          <div id="events-feed"></div>
+        </div>
+        <div class="chart-card dashboard-info-card">
+          <div class="chart-card-hd" style="margin-bottom:10px"><div class="chart-title">Rankings</div></div>
+          <div class="dashboard-rankings-columns">
+            <section>
+              <div class="dashboard-mini-title">Tiendas más visitadas</div>
+              <div id="ranking-stores"></div>
+            </section>
+            <section>
+              <div class="dashboard-mini-title">Promociones más usadas</div>
+              <div id="ranking-promos"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: SENSORES EN VIVO ======== -->
+    <div class="page" id="page-sensors">
+      <section class="integrated-view-block" aria-label="Sensores IoT en vivo">
+        <div class="integrated-view-heading">
+          <div>
+            <h2><i class="fa-solid fa-microchip" style="color:var(--accent);margin-right:7px"></i>Sensores y actuadores en vivo</h2>
+            <p>WebSocket del ESP32, servomotores, láser, LDR, potenciómetro, RFID y registros MySQL.</p>
+          </div>
+        </div>
+        <div class="integrated-frame-shell" id="sensors-frame-shell">
+          <div class="integrated-loading" id="sensors-frame-loading"><i class="fa-solid fa-spinner fa-spin"></i> Preparando sensores…</div>
+          <iframe
+            id="sensors-live-frame"
+            class="integrated-frame"
+            title="Sensores IoT en vivo"
+            data-src="/panel-iot.html?embed=sensors"
+            hidden
+          ></iframe>
+        </div>
+      </section>
+    </div>
+
+    <!-- ======== PAGE: MONITOR ======== -->
+    <div class="page" id="page-monitor">
+      <div class="section-hd" style="margin-bottom:16px">       
+          <div>
+    <div class="section-title">
+      Monitoreo en Tiempo Real
+    </div>
+
+    <div class="section-sub">
+      Vista operativa ·
+      <span
+        id="monitor-system-status"
+        style="color:var(--text-muted)"
+      >
+        Verificando sistema...
+      </span>
+    </div>
+  </div>
+     
+        <button
+          class="btn btn-secondary btn-sm"
+          id="monitor-capture-btn"
+          disabled
+          title="La captura estará disponible cuando se conecte una cámara real"
+        >
+          <i class="fa-solid fa-camera"></i>
+          Captura no disponible
+        </button>
+      </div>
+      <div class="vehicle-panel">
+        <!-- Camera feed -->
+      <div class="camera-feed">
+      <div class="camera-top">
+        <span class="cam-rec" id="monitor-camera-rec">
+          <span class="dot"></span>
+          SIN SEÑAL
+        </span>
+
+        <div
+          id="monitor-camera-name"
+          style="font-size:13px;font-weight:600"
+        >
+          Cámara de entrada
+        </div>
+
+        <div
+          style="
+            margin-left:auto;
+            display:flex;
+            gap:8px;
+            align-items:center;
+          "
+        >
+          <span
+            class="badge badge-gray"
+            id="monitor-camera-status"
+          >
+            Sin conexión
+          </span>
+
+          <span
+            id="monitor-camera-address"
+            style="
+              font-size:11px;
+              color:var(--text-muted);
+            "
+          >
+            Sin dirección
+          </span>
+        </div>
+      </div>
+
+      <div
+        class="camera-live"
+        id="monitor-camera-view"
+      >
+        <div
+          style="
+            min-height:360px;
+            width:100%;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            text-align:center;
+            color:var(--text-muted);
+            background:#05070c;
+          "
+        >
+          <i
+            class="fa-solid fa-video-slash"
+            style="
+              font-size:42px;
+              margin-bottom:14px;
+              opacity:0.55;
+            "
+          ></i>
+
+          <div
+            style="
+              font-size:14px;
+              font-weight:600;
+              color:var(--text-secondary);
+            "
+          >
+            Transmisión no disponible
+          </div>
+
+          <div
+            style="
+              font-size:11px;
+              margin-top:5px;
+            "
+          >
+            Esperando conexión con la ESP32-CAM
+          </div>
+        </div>
+      </div>
+
+      <div
+        style="
+          padding:12px 16px;
+          border-top:1px solid var(--border);
+          display:flex;
+          gap:10px;
+          flex-wrap:wrap;
+        "
+      >
+        <div style="flex:1;min-width:120px">
+          <div
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              font-weight:600;
+              text-transform:uppercase;
+              letter-spacing:0.05em;
+              margin-bottom:2px;
+            "
+          >
+            Vehículos activos
+          </div>
+
+          <div
+            id="monitor-detected-count"
+            style="
+              font-size:16px;
+              font-weight:700;
+              color:var(--accent);
+            "
+          >
+            0 activos
+          </div>
+        </div>
+
+        <div style="flex:1;min-width:120px">
+          <div
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              font-weight:600;
+              text-transform:uppercase;
+              letter-spacing:0.05em;
+              margin-bottom:2px;
+            "
+          >
+            Latencia
+          </div>
+
+          <div
+            id="monitor-camera-latency"
+            style="
+              font-size:16px;
+              font-weight:700;
+            "
+          >
+            —
+          </div>
+        </div>
+
+        <div style="flex:1;min-width:120px">
+          <div
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              font-weight:600;
+              text-transform:uppercase;
+              letter-spacing:0.05em;
+              margin-bottom:2px;
+            "
+          >
+            Última lectura
+          </div>
+
+          <div
+            id="monitor-camera-last"
+            style="
+              font-size:16px;
+              font-weight:700;
+            "
+          >
+            Sin registro
+          </div>
+        </div>
+
+        <div style="flex:1;min-width:120px">
+          <div
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              font-weight:600;
+              text-transform:uppercase;
+              letter-spacing:0.05em;
+              margin-bottom:2px;
+            "
+          >
+            Estado del dispositivo
+          </div>
+
+          <div
+            id="monitor-camera-device-state"
+            style="
+              font-size:16px;
+              font-weight:700;
+            "
+          >
+            Sin conexión
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+        <!-- Vehicles list -->
+        <div class="vehicles-list">
+          <div class="v-list-hd">
+            <div style="font-size:13px;font-weight:600">Vehículos en Estacionamiento</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="v-feed-count">0 activos · actualizado ahora</div>
+          </div>
+          <div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:10px 12px">
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px">Espacios · Vista rápida</div>
+            <div id="monitor-parking-strip" style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px"></div>
+          </div>
+          <div class="v-list-body" id="vehicles-feed" style="border-top:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: VEHICLES ======== -->
+    <div class="page" id="page-vehicles">
+      <div class="section-hd" style="margin-bottom:16px">
+        <div><div class="section-title">Gestión de Vehículos</div><div class="section-sub">Administración completa del registro vehicular</div></div>
+        <button class="btn btn-primary" onclick="openVehicleModal()"><i class="fa-solid fa-plus"></i> Nuevo Vehículo</button>
+      </div>
+      <div class="table-container">
+        <div class="table-header">
+          <div class="table-title">Registro de Vehículos</div>
+          <div class="table-actions">
+            <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input class="search-input" id="v-search" placeholder="Buscar placa, nombre..." oninput="filterVehicles()"/></div>
+            <select class="btn btn-secondary btn-sm" id="v-filter-role" onchange="filterVehicles()" style="border:1px solid var(--border)">
+              <option value="">Todos los roles</option>
+              <option value="VIP">Cliente VIP</option>
+              <option value="Trabajador">Trabajador</option>
+              <option value="Común">Usuario Común</option>
+              <option value="Propietario">Propietario</option>
+              <option value="Proveedor">Proveedor</option>
+            </select>
+            <select class="btn btn-secondary btn-sm" id="v-filter-status" onchange="filterVehicles()" style="border:1px solid var(--border)">
+              <option value="">Todos los estados</option>
+              <option value="Activo">Activo</option>
+              <option value="Inactivo">Inactivo</option>
+              <option value="Bloqueado">Bloqueado</option>
+            </select>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Placa</th>
+              <th>Propietario</th>
+              <th>Tipo</th>
+              <th>Rol</th>
+              <th>Estado</th>
+              <th>Ingresos Acumulados</th>
+              <th>Beneficios</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="vehicles-tbody"></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: HISTORY ======== -->
+    <div class="page" id="page-history">
+      <div class="section-hd" style="margin-bottom:16px">
+        <div><div class="section-title">Historial y Reportes</div><div class="section-sub">Consulta histórica de ingresos y egresos</div></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" id="historial-pdf-btn" onclick="exportarHistorialPDF()"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+          <button class="btn btn-secondary btn-sm" id="historial-excel-btn" onclick="exportarHistorialExcel()"><i class="fa-solid fa-table"></i> Excel</button>
+        </div>
+      </div>
+      <!-- Filters -->
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+          <div><label class="form-label">Placa</label><input class="form-input" placeholder="ABC-123" id="h-plate"/></div>
+          <div><label class="form-label">Conductor</label><input class="form-input" placeholder="Nombre..." id="h-driver"/></div>
+          <div><label class="form-label">Fecha Inicio</label><input class="form-input" type="date" id="h-from"/></div>
+          <div><label class="form-label">Fecha Fin</label><input class="form-input" type="date" id="h-to"/></div>
+          <div><label class="form-label">Estado</label><select class="form-select" id="h-status"><option value="">Todos</option><option value="Finalizada">Completado</option><option value="Activa">Activo</option><option value="Pagada">Pagado</option><option value="Penalizada">Penalizado</option></select></div>
+          <div><label class="form-label">Tipo</label><select class="form-select" id="h-type"><option value="">Todos</option><option value="Auto">Auto</option><option value="SUV">SUV</option><option value="Moto">Moto</option><option value="Camioneta">Camioneta</option></select></div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="aplicarFiltrosHistorial()"><i class="fa-solid fa-filter"></i> Aplicar Filtros</button>
+          <button class="btn btn-ghost btn-sm" onclick="limpiarFiltrosHistorial()"><i class="fa-solid fa-xmark"></i> Limpiar</button>
+        </div>
+      </div>
+      <!-- History charts -->
+      <div class="grid-2" style="margin-bottom:14px">
+        <div class="chart-card">
+          <div class="chart-card-hd"><div class="chart-title">Ocupación Histórica</div></div>
+          <div style="position:relative;height:180px"><canvas id="chart-hist-occ" role="img" aria-label="Ocupación histórica">Datos históricos.</canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-hd"><div class="chart-title">Ingresos Semanales</div></div>
+          <div style="position:relative;height:180px"><canvas id="chart-hist-income" role="img" aria-label="Ingresos semanales">Ingresos por semana.</canvas></div>
+        </div>
+      </div>
+      <div class="table-container">
+        <div class="table-header">
+          <div class="table-title">Registros de Acceso</div>
+          <div class="table-actions">
+            <span class="badge badge-blue">248 registros</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Hora Ingreso</th><th>Hora Salida</th><th>Tiempo</th><th>Conductor</th><th>Placa</th><th>Consumo</th><th>Descuento</th><th>Total</th><th>Detalle</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: TARIFFS ======== -->
+    <div class="page" id="page-tariffs">
+      <div class="section-hd" style="margin-bottom:16px">
+        <div>
+          <div class="section-title">Tarifas y Beneficios</div>
+          <div class="section-sub">
+            Configuración de tarifas, roles y promociones
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('tariffs','t1',this)">
+          Tarifas
+        </div>
+        <div class="tab" onclick="switchTab('tariffs','t2',this)">
+          Roles y Privilegios
+        </div>
+        <div class="tab" onclick="switchTab('tariffs','t3',this)">
+          Promociones
+        </div>
+        <div class="tab" onclick="switchTab('tariffs','t4',this)">
+          Establecimientos
+        </div>
+      </div>
+
+      <!-- Tab 1: Tarifas -->
+      <div id="tariffs-t1">
+        <div class="tariff-card">
+          <div class="tariff-hd">
+            <span class="section-title">
+              Configuración Tarifaria
+            </span>
+
+            <button
+              class="btn btn-primary btn-sm"
+              id="tarifa-guardar-btn"
+              type="button"
+              onclick="guardarTarifaReal()"
+            >
+              <i class="fa-solid fa-check"></i>
+              Guardar
+            </button>
+          </div>
+
+          <div class="tariff-grid">
+            <div class="tariff-field">
+              <label for="tarifa-hora">
+                Tarifa por Hora (S/)
+              </label>
+              <input
+                type="number"
+                id="tarifa-hora"
+                value="0"
+                min="0"
+                step="0.01"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-minuto">
+                Tarifa por Minuto (S/)
+              </label>
+              <input
+                type="number"
+                id="tarifa-minuto"
+                value="0"
+                min="0"
+                step="0.0001"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-gracia">
+                Tiempo de Gracia (min)
+              </label>
+              <input
+                type="number"
+                id="tarifa-gracia"
+                value="0"
+                min="0"
+                step="1"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-tiempo-salida">
+                Tiempo para Salir Después del Pago (min)
+              </label>
+              <input
+                type="number"
+                id="tarifa-tiempo-salida"
+                value="0"
+                min="0"
+                step="1"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-maxima">
+                Tarifa Máxima Diaria (S/)
+              </label>
+              <input
+                type="number"
+                id="tarifa-maxima"
+                value="0"
+                min="0"
+                step="0.01"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-horario-inicio">
+                Horario Promocional Inicio
+              </label>
+              <input
+                type="time"
+                id="tarifa-horario-inicio"
+              />
+            </div>
+
+            <div class="tariff-field">
+              <label for="tarifa-horario-fin">
+                Horario Promocional Fin
+              </label>
+              <input
+                type="time"
+                id="tarifa-horario-fin"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulator -->
+        <div class="card">
+          <div class="section-title" style="margin-bottom:14px">
+            <i
+              class="fa-solid fa-calculator"
+              style="color:var(--accent)"
+            ></i>
+            Simulador de Cálculo
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" for="sim-hours">
+                Horas de permanencia
+              </label>
+              <input
+                class="form-input"
+                type="number"
+                id="sim-hours"
+                value="2"
+                min="0"
+                step="0.25"
+                oninput="calcSim()"
+              />
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" for="sim-role">
+                Rol del vehículo
+              </label>
+              <select
+                class="form-select"
+                id="sim-role"
+                onchange="calcSim()"
+              >
+                <option value="">
+                  Cargando roles...
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="simulator-output">
+            <div
+              style="
+                font-size:11px;
+                color:var(--text-muted);
+                margin-bottom:4px;
+              "
+            >
+              MONTO CALCULADO
+            </div>
+
+            <div class="sim-total" id="sim-result">
+              S/ 0.00
+            </div>
+
+            <div
+              id="sim-detail"
+              style="
+                font-size:11px;
+                color:var(--text-secondary);
+                margin-top:6px;
+              "
+            >
+              Esperando la tarifa y el rol seleccionados.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Roles -->
+      <div id="tariffs-t2" style="display:none">
+        <div class="section-hd" style="margin-bottom:14px">
+          <div class="section-title">Roles y Privilegios</div>
+          <button
+            class="btn btn-primary btn-sm"
+            type="button"
+            onclick="openRoleModal()"
+          >
+            <i class="fa-solid fa-plus"></i>
+            Nuevo Rol
+          </button>
+        </div>
+        <div id="roles-list"></div>
+      </div>
+
+      <!-- Tab 3: Promociones -->
+      <div id="tariffs-t3" style="display:none">
+        <div class="section-hd" style="margin-bottom:14px">
+          <div class="section-title">Promociones por Consumo</div>
+          <button
+            class="btn btn-primary btn-sm"
+            type="button"
+            onclick="openPromoModal()"
+          >
+            <i class="fa-solid fa-plus"></i>
+            Nueva Promoción
+          </button>
+        </div>
+        <div id="promos-list"></div>
+      </div>
+
+      <!-- Tab 4: Establecimientos -->
+      <div id="tariffs-t4" style="display:none">
+        <div class="section-hd" style="margin-bottom:14px">
+          <div class="section-title">
+            Catálogo de Establecimientos
+          </div>
+          <button
+            class="btn btn-primary btn-sm"
+            type="button"
+            onclick="openStoreModal()"
+          >
+            <i class="fa-solid fa-plus"></i>
+            Nuevo Establecimiento
+          </button>
+        </div>
+        <div id="stores-list"></div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: IOT ======== -->
+    <div class="page" id="page-iot">
+      <div class="section-hd" style="margin-bottom:16px">
+        <div><div class="section-title">Administración IoT</div><div class="section-sub">Monitoreo de dispositivos y sensores del sistema</div></div>
+        <div style="display:flex;gap:8px">
+          <span class="badge badge-green" id="iot-online-badge"><span class="status-dot dot-green" style="margin:0;margin-right:4px"></span>0 Online</span>
+          <span class="badge badge-purple" id="iot-alert-badge">0 Alertas</span>
+          <button class="btn btn-ghost btn-sm" id="iot-refresh-btn" onclick="recargarDatosIoT()" title="Actualizar datos IoT"><i class="fa-solid fa-rotate"></i></button>
+        </div>
+      </div>
+      <!-- KPIs IoT -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));margin-bottom:20px">
+        <div class="kpi-card">
+          <div class="kpi-label">Latencia Promedio</div>
+          <div class="kpi-value" id="iot-kpi-latencia" style="font-size:18px">0 ms</div>
+          <div class="kpi-sub" id="iot-kpi-latencia-estado">Sin datos</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Última Sincronización</div>
+          <div class="kpi-value" id="iot-kpi-sincronizacion" style="font-size:14px">Sin registros</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Uso de Red</div>
+          <div class="kpi-value" id="iot-kpi-red" style="font-size:18px">—</div>
+          <div class="kpi-sub">No medido</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Eventos Hoy</div>
+          <div class="kpi-value" id="iot-kpi-eventos" style="font-size:18px">0</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Uptime</div>
+          <div class="kpi-value" id="iot-kpi-uptime" style="font-size:18px">—</div>
+          <div class="kpi-sub">No calculado</div>
+        </div>
+      </div>
+      <!-- Device cards -->
+      <div id="iot-devices" class="grid-auto" style="margin-bottom:20px"></div>
+      <!-- Logs -->
+      <div class="chart-card">
+        <div class="chart-card-hd" style="margin-bottom:10px">
+          <div><div class="chart-title">Log de Eventos IoT</div><div class="chart-sub">Últimos eventos del sistema</div></div>
+          <button class="btn btn-ghost btn-sm" style="display:none" title="El log real no puede eliminarse desde esta vista"><i class="fa-solid fa-trash"></i></button>
+        </div>
+        <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:280px;overflow-y:auto" id="iot-logs"></div>
+      </div>
+    </div>
+
+    <!-- ======== PAGE: SETTINGS ======== -->
+    <div class="page" id="page-settings">
+      <div class="section-hd" style="margin-bottom:20px">
+        <div><div class="section-title">Configuración del Sistema</div><div class="section-sub">Personaliza la plataforma según tus preferencias</div></div>
+        <button class="btn btn-primary btn-sm" id="config-guardar-btn" onclick="guardarConfiguracionSistema()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
+      </div>
+    <!-- Account -->
+    <div class="config-section">
+      <div class="config-section-title">
+        <i class="fa-solid fa-user"></i>
+        Cuenta de Administrador
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Nombre completo</label>
+          <input
+            class="form-input"
+            id="config-admin-nombre"
+            value=""
+            readonly
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Correo electrónico</label>
+          <input
+            class="form-input"
+            id="config-admin-correo"
+            value=""
+            type="email"
+            readonly
+          />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Usuario</label>
+          <input
+            class="form-input"
+            id="config-admin-usuario"
+            value=""
+            readonly
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Estado</label>
+          <input
+            class="form-input"
+            id="config-admin-estado"
+            value=""
+            readonly
+          />
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:var(--text-muted)">
+        La contraseña no se muestra por seguridad.
+      </div>
+    </div>  
+      <!-- Appearance -->
+      <div class="config-section">
+        <div class="config-section-title"><i class="fa-solid fa-palette"></i>Apariencia</div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">Modo oscuro</div><div class="toggle-sub">Activa el tema oscuro del sistema</div></div>
+          <div class="toggle on" id="dark-mode-toggle" onclick="toggleTheme()"></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="form-label">Color principal</div>
+          <div class="color-picker-row">
+            <div class="color-opt active" style="background:#4f8ef7" onclick="setAccent('#4f8ef7','#6ba0ff',this)"></div>
+            <div class="color-opt" style="background:#22c55e" onclick="setAccent('#22c55e','#4ade80',this)"></div>
+            <div class="color-opt" style="background:#a78bfa" onclick="setAccent('#a78bfa','#c4b5fd',this)"></div>
+            <div class="color-opt" style="background:#f59e0b" onclick="setAccent('#f59e0b','#fbbf24',this)"></div>
+            <div class="color-opt" style="background:#ef4444" onclick="setAccent('#ef4444','#f87171',this)"></div>
+            <div class="color-opt" style="background:#14b8a6" onclick="setAccent('#14b8a6','#2dd4bf',this)"></div>
+          </div>
+        </div>
+      </div>
+      <!-- System -->
+      <div class="config-section">
+        <div class="config-section-title">
+          <i class="fa-solid fa-building"></i>
+          Sistema
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">
+              Nombre del estacionamiento
+            </label>
+
+            <input
+              class="form-input"
+              id="config-sistema-nombre"
+              value=""
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              Número de espacios
+            </label>
+
+            <input
+              class="form-input"
+              id="config-sistema-espacios"
+              type="number"
+              value="0"
+              readonly
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Tiempo máximo permitido (horas)
+          </label>
+
+          <input
+            class="form-input"
+            id="config-sistema-tiempo"
+            type="number"
+            min="1"
+            max="168"
+            value="24"
+            style="max-width:200px"
+          />
+        </div>
+      </div>
+      <!-- Notifications -->
+      <div class="config-section">
+        <div class="config-section-title">
+          <i class="fa-solid fa-bell"></i>
+          Notificaciones
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Alertas visuales</div>
+            <div class="toggle-sub">
+              Notificaciones en pantalla
+            </div>
+          </div>
+
+          <div
+            class="toggle"
+            id="config-alertas-visuales"
+            onclick="this.classList.toggle('on')"
+          ></div>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Alertas sonoras</div>
+            <div class="toggle-sub">
+              Sonido al detectar eventos
+            </div>
+          </div>
+
+          <div
+            class="toggle"
+            id="config-alertas-sonoras"
+            onclick="this.classList.toggle('on')"
+          ></div>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Correos automáticos</div>
+            <div class="toggle-sub">
+              Envío automático de reportes por correo
+            </div>
+          </div>
+
+          <div
+            class="toggle"
+            id="config-correos-automaticos"
+            onclick="this.classList.toggle('on')"
+          ></div>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">
+              Alertas de sensores desconectados
+            </div>
+
+            <div class="toggle-sub">
+              Notificar cuando un dispositivo falle
+            </div>
+          </div>
+
+          <div
+            class="toggle"
+            id="config-alertas-sensores"
+            onclick="this.classList.toggle('on')"
+          ></div>
+        </div>
+      </div>      
+      <!-- Accessibility -->
+      <div class="config-section">
+        <div class="config-section-title"><i class="fa-solid fa-universal-access"></i>Accesibilidad</div>
+        <div>
+          <label class="form-label">Tamaño de fuente</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="font-size-group">
+            <button class="btn btn-secondary btn-sm" onclick="setFontSize('small',this)">Pequeño</button>
+            <button class="btn btn-primary btn-sm" onclick="setFontSize('normal',this)">Normal</button>
+            <button class="btn btn-secondary btn-sm" onclick="setFontSize('large',this)">Grande</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Ajusta el tamaño de todo el contenido de la plataforma.</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content-scroll -->
+</div><!-- /content-area -->
+
+</div><!-- /main-layout -->
+
+<!-- VEHICLE DETAIL PANEL -->
+<div class="detail-panel" id="detail-panel">
+  <div class="detail-hd">
+    <button onclick="closeDetailPanel()" style="width:28px;height:28px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer" class="header-btn"><i class="fa-solid fa-xmark"></i></button>
+    <div style="flex:1">
+      <div class="section-title" id="dp-title">Detalle del Vehículo</div>
+      <div class="section-sub" id="dp-plate">Placa: ---</div>
+    </div>
+    <button class="btn btn-primary btn-sm" id="dp-add-activity-btn" onclick="openActivityModal()"><i class="fa-solid fa-plus"></i> Actividad</button>
+  </div>
+  <div class="detail-body" id="dp-body"></div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-vehicle">
+  <div class="modal">
+    <div class="modal-hd">
+      <span
+        class="modal-title"
+        id="vehicle-modal-title"
+      >
+        Nuevo Vehículo
+      </span>
+
+      <div
+        class="modal-close"
+        onclick="closeModal('modal-vehicle')"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </div>
+    </div>
+
+    <div class="modal-body">
+
+      <input
+        type="hidden"
+        id="vehicle-edit-id"
+        value=""
+      />
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Placa *
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-plate"
+            placeholder="ABC-123"
+            maxlength="15"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Tipo *
+          </label>
+
+          <select
+            class="form-select"
+            id="vehicle-type"
+          >
+            <option value="Auto">Auto</option>
+            <option value="SUV">SUV</option>
+            <option value="Camioneta">Camioneta</option>
+            <option value="Moto">Moto</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Marca
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-brand"
+            placeholder="Toyota"
+            maxlength="60"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Modelo
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-model"
+            placeholder="Corolla"
+            maxlength="60"
+          />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Color
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-color"
+            placeholder="Blanco"
+            maxlength="40"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Rol *
+          </label>
+
+          <select
+            class="form-select"
+            id="vehicle-role"
+          >
+            <option value="">
+              Cargando roles...
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="
+        font-size:11px;
+        font-weight:600;
+        text-transform:uppercase;
+        letter-spacing:0.05em;
+        color:var(--text-muted);
+        margin-bottom:12px;
+      ">
+        Datos del conductor
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Nombre completo *
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-driver-name"
+            placeholder="Juan Pérez"
+            maxlength="120"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            DNI o documento *
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-driver-document"
+            placeholder="12345678"
+            maxlength="20"
+          />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Teléfono
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-driver-phone"
+            placeholder="+51 999 999 999"
+            maxlength="25"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Correo
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-driver-email"
+            placeholder="correo@email.com"
+            type="email"
+            maxlength="150"
+          />
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="
+        font-size:11px;
+        font-weight:600;
+        text-transform:uppercase;
+        letter-spacing:0.05em;
+        color:var(--text-muted);
+        margin-bottom:12px;
+      ">
+        Tarjeta RFID
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            UID RFID
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-rfid"
+            placeholder="RFID-009"
+            maxlength="80"
+            autocomplete="off"
+          />
+
+          <div style="
+            margin-top:5px;
+            font-size:10px;
+            color:var(--text-muted);
+          ">
+            Puede dejarse vacío y asignarse posteriormente.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Saldo inicial (S/)
+          </label>
+
+          <input
+            class="form-input"
+            id="vehicle-balance"
+            type="number"
+            min="0"
+            step="0.01"
+            value="0.00"
+          />
+        </div>
+      </div>
+
+      <div
+        id="vehicle-form-error"
+        style="
+          display:none;
+          margin-top:10px;
+          padding:9px 11px;
+          border-radius:var(--radius-sm);
+          background:var(--red-bg);
+          color:var(--red);
+          font-size:11px;
+        "
+      ></div>
+
+    </div>
+
+    <div class="modal-footer">
+      <button
+        class="btn btn-ghost"
+        onclick="closeModal('modal-vehicle')"
+      >
+        Cancelar
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="vehicle-save-btn"
+        onclick="saveVehicle()"
+      >
+        <i class="fa-solid fa-check"></i>
+        Guardar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-promo">
+  <div class="modal">
+    <div class="modal-hd">
+      <span
+        class="modal-title"
+        id="promo-modal-title"
+      >
+        Nueva Promoción
+      </span>
+
+      <div
+        class="modal-close"
+        onclick="closeModal('modal-promo')"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <input
+        type="hidden"
+        id="promo-edit-index"
+        value="-1"
+      />
+
+      <div class="form-group">
+        <label class="form-label">
+          Nombre de la promoción *
+        </label>
+
+        <input
+          class="form-input"
+          id="promo-name"
+          placeholder="Ej: Promo Fin de Semana"
+          maxlength="120"
+        />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Monto mínimo de consumo (S/) *
+          </label>
+
+          <input
+            class="form-input"
+            id="promo-min"
+            type="number"
+            min="0"
+            step="0.01"
+            value="0"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Tipo de beneficio *
+          </label>
+
+          <select
+            class="form-select"
+            id="promo-type"
+            onchange="actualizarCampoValorPromocion()"
+          >
+            <option value="Porcentaje">
+              Porcentaje de descuento
+            </option>
+
+            <option value="Horas gratis">
+              Horas gratis
+            </option>
+
+            <option value="Minutos gratis">
+              Minutos gratis
+            </option>
+
+            <option value="Monto fijo">
+              Descuento de monto fijo
+            </option>
+
+            <option value="Exoneracion total">
+              Exoneración total
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label
+            class="form-label"
+            id="promo-value-label"
+          >
+            Valor del beneficio *
+          </label>
+
+          <input
+            class="form-input"
+            id="promo-value"
+            type="number"
+            min="0"
+            step="0.01"
+            value="10"
+          />
+
+          <div
+            id="promo-value-help"
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              margin-top:5px;
+            "
+          >
+            Ingresa el porcentaje de descuento.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Límite de usos
+          </label>
+
+          <input
+            class="form-input"
+            id="promo-limit"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="Sin límite"
+          />
+
+          <div
+            style="
+              font-size:10px;
+              color:var(--text-muted);
+              margin-top:5px;
+            "
+          >
+            Déjalo vacío para permitir usos ilimitados.
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">
+          Descripción del beneficio
+        </label>
+
+        <input
+          class="form-input"
+          id="promo-benefit"
+          maxlength="255"
+          placeholder="Se generará automáticamente si se deja vacío"
+        />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">
+            Fecha de inicio *
+          </label>
+
+          <input
+            class="form-input"
+            id="promo-from"
+            type="date"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Fecha de fin *
+          </label>
+
+          <input
+            class="form-input"
+            id="promo-to"
+            type="date"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">
+          Estado
+        </label>
+
+        <select
+          class="form-select"
+          id="promo-status"
+        >
+          <option value="Activa">Activa</option>
+          <option value="Inactiva">Inactiva</option>
+          <option value="Vencida">Vencida</option>
+        </select>
+      </div>
+
+      <div
+        id="promo-form-error"
+        style="
+          display:none;
+          margin-top:10px;
+          padding:9px 11px;
+          border-radius:var(--radius-sm);
+          background:var(--red-bg);
+          color:var(--red);
+          font-size:11px;
+        "
+      ></div>
+    </div>
+
+    <div class="modal-footer">
+      <button
+        class="btn btn-ghost"
+        onclick="closeModal('modal-promo')"
+      >
+        Cancelar
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="promo-save-btn"
+        onclick="savePromo()"
+      >
+        <i class="fa-solid fa-check"></i>
+        Guardar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-store">
+  <div class="modal">
+    <div class="modal-hd">
+      <span class="modal-title" id="store-modal-title">
+        Nuevo Establecimiento
+      </span>
+
+      <div
+        class="modal-close"
+        onclick="closeModal('modal-store')"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <input
+        type="hidden"
+        id="store-edit-index"
+        value="-1"
+      />
+
+      <div class="form-group">
+        <label class="form-label">Nombre</label>
+        <input
+          class="form-input"
+          id="store-name"
+          maxlength="120"
+          placeholder="Ej: Restaurante Central"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">
+          Tipo de establecimiento
+        </label>
+
+        <select
+          class="form-select"
+          id="store-kind"
+          onchange="actualizarAyudaTipoEstablecimiento()"
+        >
+          <option value="consumo">
+            Por consumo (monto en S/)
+          </option>
+          <option value="tiempo">
+            Por tiempo (duración en minutos)
+          </option>
+        </select>
+
+        <div
+          id="store-kind-hint"
+          style="
+            font-size:11px;
+            color:var(--text-secondary);
+            margin-top:5px;
+          "
+        >
+          Este establecimiento registrará consumos en soles.
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Categoría</label>
+
+          <select
+            class="form-select"
+            id="store-cat"
+            onchange="onStoreCatChange()"
+          >
+            <option>Restaurante</option>
+            <option>Supermercado</option>
+            <option>Farmacia</option>
+            <option>Cine</option>
+            <option>Gimnasio</option>
+            <option>Electrónica</option>
+            <option>Ropa</option>
+            <option>Banco</option>
+            <option>Cafetería</option>
+            <option>Servicios</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Ubicación</label>
+          <input
+            class="form-input"
+            id="store-location"
+            maxlength="150"
+            placeholder="Ej: Piso 1 - Ala Norte"
+          />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Descripción</label>
+        <textarea
+          class="form-input"
+          id="store-desc"
+          rows="3"
+          maxlength="255"
+          placeholder="Descripción del establecimiento..."
+        ></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Estado</label>
+        <select class="form-select" id="store-status">
+          <option>Activo</option>
+          <option>Inactivo</option>
+        </select>
+      </div>
+
+      <div
+        id="store-form-error"
+        style="
+          display:none;
+          color:var(--red);
+          font-size:11px;
+          margin-top:6px;
+        "
+      ></div>
+    </div>
+
+    <div class="modal-footer">
+      <button
+        class="btn btn-ghost"
+        type="button"
+        onclick="closeModal('modal-store')"
+      >
+        Cancelar
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="store-save-btn"
+        type="button"
+        onclick="saveStore()"
+      >
+        <i class="fa-solid fa-check"></i>
+        Guardar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-role">
+  <div class="modal">
+    <div class="modal-hd"><span class="modal-title" id="role-modal-title">Nuevo Rol</span><div class="modal-close" onclick="closeModal('modal-role')"><i class="fa-solid fa-xmark"></i></div></div>
+    <div class="modal-body">
+      <input type="hidden" id="role-edit-index" value="-1"/>
+      <div class="form-row"><div class="form-group"><label class="form-label">Nombre del rol</label><input class="form-input" id="role-name" placeholder="Ej: Cliente Frecuente"/></div><div class="form-group"><label class="form-label">Ícono</label><select class="form-select" id="role-icon"><option value="fa-user">Usuario</option><option value="fa-briefcase">Maletín</option><option value="fa-crown">Corona</option><option value="fa-store">Tienda</option><option value="fa-user-tie">Corbata</option><option value="fa-star">Estrella</option><option value="fa-truck">Camión</option></select></div></div>
+      <div class="form-group"><label class="form-label">Descripción</label><input class="form-input" id="role-desc" placeholder="Breve descripción del rol"/></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Porcentaje de descuento (%)</label><input class="form-input" id="role-discount" type="number" min="0" max="100" value="0"/></div>
+        <div class="form-group"><label class="form-label">Horas gratuitas</label><input class="form-input" id="role-hours" type="number" min="0" value="0"/></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Prioridad de acceso</label>
+        <select class="form-select" id="role-priority"><option>Normal</option><option>Alta</option><option>Máxima</option></select>
+      </div>
+      <div class="toggle-row" style="border:none;padding:6px 0">
+        <div><div class="toggle-label">Exoneración total</div><div class="toggle-sub">Sin cobro independientemente del tiempo</div></div>
+        <div class="toggle" id="role-exempt-toggle" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-role')">Cancelar</button><button class="btn btn-primary" id="role-save-btn" onclick="saveRole()"><i class="fa-solid fa-check"></i> Crear Rol</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-activity">
+  <div class="modal">
+    <div class="modal-hd"><span class="modal-title">Agregar Actividad</span><div class="modal-close" onclick="closeModal('modal-activity')"><i class="fa-solid fa-xmark"></i></div></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Establecimiento</label>
+        <select class="form-select" id="act-store" onchange="onActivityStoreChange()"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Descripción</label>
+        <input class="form-input" id="act-desc" placeholder="Ej: Compra de abarrotes, película 3D, rutina de pesas..."/>
+      </div>
+      <div class="form-row">
+        <div class="form-group" id="act-amount-wrap">
+          <label class="form-label">Monto consumido (S/)</label>
+          <input class="form-input" id="act-amount" type="number" min="0" step="0.10" placeholder="50.00"/>
+        </div>
+        <div class="form-group" id="act-minutes-wrap" style="display:none">
+          <label class="form-label">Tiempo (minutos)</label>
+          <input class="form-input" id="act-minutes" type="number" min="0" step="5" placeholder="90"/>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:-4px;display:flex;align-items:center;gap:5px" id="act-type-hint"><i class="fa-solid fa-circle-info"></i> Este establecimiento registra consumo en soles.</div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-activity')">Cancelar</button><button class="btn btn-primary" onclick="saveActivity()"><i class="fa-solid fa-check"></i> Agregar Actividad</button></div>
+  </div>
+</div>
+
+<!-- PARKING SPOT TOOLTIP -->
+<div id="spot-tooltip" style="position:fixed;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;z-index:300;pointer-events:none;display:none;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,0.3)"></div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<script src="/assets/js/admin.js"></script>
+</div><!-- /app -->
+</body>
+</html>

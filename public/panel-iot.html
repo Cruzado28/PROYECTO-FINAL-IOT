@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartPark — Sistema de Estacionamiento</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+  <link rel="stylesheet" href="/assets/css/panel-iot.css">
+  <link rel="stylesheet" href="/assets/css/sensors-live.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-box">
+      <div class="brand-row">
+        <div class="brand-icon"><i class="ti ti-car-garage"></i></div>
+        <div class="brand">Smart<span>Park</span></div>
+      </div>
+      <h1>Bienvenido de vuelta</h1>
+      <p>Sistema de monitoreo de estacionamiento IoT</p>
+      <form id="login-form" novalidate>
+        <label for="inp-user">Usuario</label>
+        <div class="input-wrap"><i class="ti ti-user"></i><input id="inp-user" name="usuario" autocomplete="username" required placeholder="Ingrese su usuario"></div>
+        <label for="inp-pass">Contraseña</label>
+        <div class="input-wrap"><i class="ti ti-lock"></i><input id="inp-pass" name="contrasena" type="password" autocomplete="current-password" required placeholder="Ingrese su contraseña"></div>
+        <div id="login-error" class="form-error" hidden></div>
+        <button id="btn-login" class="btn-primary" type="submit"><i class="ti ti-login"></i> Ingresar al sistema</button>
+      </form>
+      <small>Acceso protegido mediante JWT.</small>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand-icon small"><i class="ti ti-car-garage"></i></div>
+        <div class="brand small">Smart<span>Park</span></div>
+        <span id="system-badge" class="status-badge online"><span class="live-dot"></span>Sistema activo</span>
+      </div>
+      <div class="topbar-right">
+        <span id="tb-clock" class="clock">--:--:--</span>
+        <div class="user-pill"><div id="user-avatar" class="avatar">AD</div><span id="user-name">Administrador</span></div>
+        <button id="btn-logout" class="btn-secondary danger"><i class="ti ti-logout"></i> Salir</button>
+      </div>
+    </header>
+
+    <nav class="nav-tabs" aria-label="Secciones principales">
+      <button class="nav-tab active" data-page="dashboard-page"><i class="ti ti-layout-dashboard"></i> Dashboard</button>
+      <button class="nav-tab" data-page="sensors-page"><i class="ti ti-cpu"></i> Sensores en vivo</button>
+    </nav>
+
+    <main>
+      <section id="dashboard-page" class="page active">
+        <div class="dashboard-body">
+          <div class="stats-row">
+            <article class="stat-card"><div class="stat-icon blue"><i class="ti ti-layout-grid"></i></div><div><span>Total espacios</span><strong id="stat-total">—</strong></div></article>
+            <article class="stat-card"><div class="stat-icon red"><i class="ti ti-car"></i></div><div><span>Ocupados</span><strong id="stat-occupied">—</strong></div></article>
+            <article class="stat-card"><div class="stat-icon green"><i class="ti ti-circle-check"></i></div><div><span>Disponibles</span><strong id="stat-free">—</strong></div></article>
+            <article class="stat-card"><div class="stat-icon warn"><i class="ti ti-clock"></i></div><div><span>Tiempo promedio</span><strong id="stat-average">—</strong></div></article>
+          </div>
+
+          <div class="left-column">
+            <article class="panel">
+              <div class="panel-header"><div><h2><i class="ti ti-layout-grid"></i> Espacios del estacionamiento</h2><p id="spaces-summary">Cargando estado real…</p></div><button id="refresh-dashboard" class="icon-button" title="Actualizar"><i class="ti ti-refresh"></i></button></div>
+              <div id="spaces-grid" class="spaces-grid"><div class="empty-state">Cargando espacios…</div></div>
+            </article>
+
+          </div>
+
+          <aside class="panel vehicles-panel">
+            <div class="panel-header"><div><h2><i class="ti ti-users"></i> Vehículos en estacionamiento</h2><p id="vehicles-summary">Cargando registros reales…</p></div></div>
+            <div id="vehicle-list" class="vehicle-list"><div class="empty-state">Cargando vehículos…</div></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="sensors-page" class="page">
+        <div class="sensor-page-wrap">
+          <section class="esp32-toolbar">
+            <div id="esp32-indicator" class="esp32-indicator offline">
+              <span class="esp32-dot"></span>
+              <div><strong id="esp32-status-text">ESP32 desconectado</strong><small id="esp32-status-detail">La conexión inicia al abrir esta pestaña.</small></div>
+            </div>
+            <label class="sensor-config-field">
+              <span>WebSocket del ESP32</span>
+              <input id="esp32-ws-url" type="text" value="ws://192.168.4.1:81" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="sensor-config-field camera-url-field">
+              <span>URL de ESP32-CAM</span>
+              <input id="esp32-camera-url" type="text" placeholder="Ejemplo: http://192.168.4.2:81/stream" spellcheck="false" autocomplete="off">
+            </label>
+            <button id="btn-camera-apply" class="sensor-action-button"><i class="ti ti-camera"></i> Aplicar cámara</button>
+            <button id="btn-esp32-reconnect" class="sensor-action-button primary"><i class="ti ti-refresh"></i> Reconectar</button>
+          </section>
+
+          <div class="live-sensors-layout">
+            <div class="live-sensors-main">
+              <section class="mode-switch-card">
+                <div class="mode-switch-info">
+                  <div class="mode-switch-icon"><i class="ti ti-adjustments"></i></div>
+                  <div><strong>Modo de operación</strong><small id="mode-switch-sub">Modo prueba — controles manuales habilitados</small></div>
+                </div>
+                <div class="mode-switch-toggle">
+                  <button id="mode-btn-test" type="button" class="active-test"><i class="ti ti-tool"></i> Prueba</button>
+                  <button id="mode-btn-live" type="button"><i class="ti ti-player-play"></i> Funcionamiento</button>
+                </div>
+              </section>
+              <div id="mode-banner" class="mode-banner test"><i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span></div>
+
+              <section class="sensor-top-row">
+                <article class="sensor-clock-card">
+                  <div>
+                    <span class="sensor-eyebrow"><i class="ti ti-clock"></i> Reloj de demostración</span>
+                    <strong id="sim-clock">--:--:--</strong>
+                    <small id="sim-date">---</small>
+                  </div>
+                  <div class="clock-speed-info">
+                    <span>Velocidad según potenciómetro</span>
+                    <strong id="sim-speed-badge">×1</strong>
+                    <small id="sim-speed-desc">Sin datos</small>
+                    <div class="speed-track"><span id="sim-speed-bar"></span></div>
+                  </div>
+                </article>
+
+                <article class="pwm-widget">
+                  <div class="pwm-title">Potenciómetro <span class="gpio-tag">GPIO 32</span></div>
+                  <div class="pwm-gauge-wrap">
+                    <svg viewBox="0 0 110 70" aria-hidden="true">
+                      <path class="gauge-bg" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132"/>
+                      <path id="pwm-arc" class="gauge-fill" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132" stroke-dashoffset="132"/>
+                    </svg>
+                    <strong id="pwm-val">--</strong>
+                  </div>
+                  <small id="pwm-sub">ADC: -- / 4095<br>Sin datos</small>
+                </article>
+              </section>
+
+              <section class="sensor-group-card">
+                <div class="sensor-group-title"><i class="ti ti-barrier-block"></i> Barreras de acceso, láser y LDR</div>
+                <div class="barrier-grid">
+                  <article class="servo-card">
+                    <div class="servo-heading"><strong>Entrada</strong><span id="servo-entry-state" class="servo-state closed">SIN DATOS</span></div>
+                    <div class="servo-gauge-wrap">
+                      <svg viewBox="0 0 96 86" aria-hidden="true">
+                        <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
+                        <path id="servo-entry-arc" class="servo-gauge-value" d="M 8 72 A 42 42 0 1 1 88 72" stroke-dasharray="148" stroke-dashoffset="148"/>
+                        <text id="servo-entry-angle" x="48" y="56" text-anchor="middle">--°</text>
+                      </svg>
+                    </div>
+                    <span class="gpio-tag">Servo · GPIO 26</span>
+                    <button id="btn-servo-entry" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
+                  </article>
+
+                  <div class="center-sensors">
+                    <article class="mini-sensor-card">
+                      <div class="mini-sensor-icon laser"><i class="ti ti-laser-pointer"></i></div>
+                      <div><span>Módulo láser</span><strong id="laser-value">SIN DATOS</strong><small id="laser-detail">Esperando ESP32…</small></div>
+                      <span id="laser-dot" class="sensor-pill off"></span>
+                    </article>
+                    <button id="btn-laser" class="manual-control laser-button" type="button"><i class="ti ti-power"></i> Encender láser</button>
+                    <article class="mini-sensor-card">
+                      <div class="mini-sensor-icon ldr"><i class="ti ti-brightness"></i></div>
+                      <div><span>Sensor LDR</span><strong id="ldr-value">SIN DATOS</strong><small id="ldr-detail">Esperando ESP32…</small><em class="gpio-tag">GPIO 13</em></div>
+                      <span id="ldr-dot" class="sensor-pill off"></span>
+                    </article>
+                  </div>
+
+                  <article class="servo-card">
+                    <div class="servo-heading"><strong>Salida</strong><span id="servo-exit-state" class="servo-state closed">SIN DATOS</span></div>
+                    <div class="servo-gauge-wrap">
+                      <svg viewBox="0 0 96 86" aria-hidden="true">
+                        <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
+                        <path id="servo-exit-arc" class="servo-gauge-value" d="M 8 72 A 42 42 0 1 1 88 72" stroke-dasharray="148" stroke-dashoffset="148"/>
+                        <text id="servo-exit-angle" x="48" y="56" text-anchor="middle">--°</text>
+                      </svg>
+                    </div>
+                    <span class="gpio-tag">Servo · GPIO 25</span>
+                    <button id="btn-servo-exit" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
+                  </article>
+                </div>
+              </section>
+
+              <section class="sensor-group-card">
+                <div class="sensor-group-title"><i class="ti ti-scan"></i> Módulo RFID — RC522 / NTAG215</div>
+                <div class="rfid-tabs">
+                  <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Leer</button>
+                  <button type="button" class="rfid-tab" data-rfid-page="rfid-write"><i class="ti ti-edit"></i> Escribir tarjeta</button>
+                </div>
+
+                <div id="rfid-read" class="rfid-page active">
+                  <div class="rfid-grid">
+                    <article class="rfid-card">
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-nfc"></i></div><div><strong>Lector RFID</strong><span>RC522 · SPI · ESP32</span></div></div>
+                      <div class="gpio-list"><span>SS: GPIO 5</span><span>RST: GPIO 4</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
+                      <div class="rfid-connection"><span id="rfid-status-dot" class="sensor-pill off"></span><span id="rfid-status-text">Sin conexión al ESP32</span></div>
+                      <p>La última tarjeta se actualiza cuando el ESP32 transmite un UID por WebSocket.</p>
+                    </article>
+                    <article class="rfid-card">
+                      <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
+                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector RC522</small></div>
+                    </article>
+                  </div>
+                </div>
+
+                <div id="rfid-write" class="rfid-page">
+                  <div class="rfid-grid">
+                    <article class="rfid-card">
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se enviarán al firmware para escritura</span></div></div>
+                      <div class="write-grid">
+                        <label class="full"><span>Carro o modelo</span><input id="rfid-car" type="text" placeholder="Toyota Corolla"></label>
+                        <label><span>Marca</span><input id="rfid-brand" type="text" placeholder="Toyota"></label>
+                        <label><span>Placa</span><input id="rfid-plate" type="text" maxlength="7" placeholder="ABC-123"></label>
+                        <label class="full"><span>Nombre y apellido</span><input id="rfid-name" type="text" placeholder="Juan Pérez"></label>
+                        <label><span>Teléfono</span><input id="rfid-phone" type="text" maxlength="9" placeholder="987654321"></label>
+                        <label><span>Saldo (S/)</span><input id="rfid-balance" type="number" min="0" step="0.01" placeholder="15.50"></label>
+                        <label><span>DNI</span><input id="rfid-dni" type="text" maxlength="8" inputmode="numeric" placeholder="45678912"></label>
+                        <label><span>Tipo</span><select id="rfid-type"><option value="Sedan">Sedán</option><option value="SUV">SUV</option><option value="Deportivo">Deportivo</option><option value="Hatchback">Hatchback</option><option value="Pickup">Pickup</option><option value="Camioneta">Camioneta / Van</option><option value="Moto">Moto</option></select></label>
+                      </div>
+                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta</button>
+                      <button id="btn-rfid-cancel" class="rfid-cancel-button" type="button" hidden>Cancelar escritura</button>
+                      <div id="rfid-write-status" class="write-status" hidden></div>
+                    </article>
+                    <article class="rfid-card instructions-card">
+                      <h3><i class="ti ti-info-circle"></i> Procedimiento</h3>
+                      <ol><li>Completa los datos.</li><li>Presiona “Escribir en tarjeta”.</li><li>Acerca la NTAG215 al RC522.</li><li>Espera la confirmación enviada por el ESP32.</li></ol>
+                      <p><strong>Importante:</strong> esta acción puede sobrescribir los datos anteriores de la tarjeta.</p>
+                    </article>
+                  </div>
+                </div>
+              </section>
+
+              <section class="mysql-iot-section">
+                <div class="iot-stats">
+                  <article><span>Total dispositivos</span><strong id="iot-total">—</strong></article>
+                  <article><span>Online en MySQL</span><strong id="iot-online">—</strong></article>
+                  <article><span>Offline en MySQL</span><strong id="iot-offline">—</strong></article>
+                  <article><span>Latencia promedio</span><strong id="iot-latency">—</strong></article>
+                </div>
+                <article class="panel">
+                  <div class="panel-header"><div><h2><i class="ti ti-database"></i> Dispositivos registrados</h2><p>Información persistida en MySQL.</p></div><button id="refresh-iot" class="icon-button" title="Actualizar"><i class="ti ti-refresh"></i></button></div>
+                  <div id="devices-grid" class="devices-grid"><div class="empty-state">Cargando dispositivos…</div></div>
+                </article>
+              </section>
+            </div>
+
+            <aside class="sensor-side-column">
+              <article class="sensor-log-panel">
+                <header><div><h2><i class="ti ti-terminal-2"></i> Log en vivo</h2><p>Mensajes recibidos directamente del ESP32.</p></div><div><button id="btn-log-auto" class="log-tool active" type="button"><i class="ti ti-arrow-bar-to-down"></i> Auto</button><button id="btn-log-clear" class="log-tool" type="button">Limpiar</button></div></header>
+                <div id="sensor-live-log" class="sensor-live-log"><div class="sensor-log-empty">Aún no hay eventos del ESP32.</div></div>
+              </article>
+
+              <article class="panel mysql-log-panel">
+                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Últimos eventos guardados en MySQL.</p></div></div>
+                <div id="iot-logs" class="iot-logs"><div class="empty-state">Cargando logs…</div></div>
+              </article>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <script type="module" src="/assets/js/panel-iot.js"></script>
+</body>
+</html>

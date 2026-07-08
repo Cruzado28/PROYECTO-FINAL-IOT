@@ -29,10 +29,37 @@ function el(id) {
   return document.getElementById(id);
 }
 
+function obtenerGatewayWsUrl() {
+  const protocolo =
+    window.location.protocol === "https:"
+      ? "wss:"
+      : "ws:";
+
+  return `${protocolo}//${window.location.host}/iot-ws?client=panel`;
+}
+
 function normalizarWsUrl(valor) {
   const texto = String(valor || "").trim();
-  if (!texto) return "ws://192.168.4.1:81";
+
+  if (
+    !texto ||
+    texto.toLowerCase() === "auto" ||
+    texto.toLowerCase() === "gateway"
+  ) {
+    return obtenerGatewayWsUrl();
+  }
+
+  if (/^\/iot-ws/i.test(texto)) {
+    const protocolo =
+      window.location.protocol === "https:"
+        ? "wss:"
+        : "ws:";
+
+    return `${protocolo}//${window.location.host}${texto}`;
+  }
+
   if (/^wss?:\/\//i.test(texto)) return texto;
+
   return `ws://${texto.includes(":") ? texto : `${texto}:81`}`;
 }
 
@@ -293,7 +320,7 @@ function updatePot(rawValue) {
   const percentage = raw / 4095;
   const speed = 1 + percentage * 59;
   const offset = 132 - percentage * 132;
-  const speedText = speed < 2 ? "×1" : speed < 10 ? `×${speed.toFixed(1)}` : `×${Math.round(speed)}`;
+  const speedText = speed < 2 ? "x1" : speed < 10 ? `x${speed.toFixed(1)}` : `x${Math.round(speed)}`;
 
   const arc = el("pwm-arc");
   if (arc) {
@@ -475,7 +502,7 @@ function toggleServo(id) {
   const firmwareId = isEntry ? "entrada" : "salida";
 
   if (wsSend({ cmd: "servo", id: firmwareId, angle })) {
-    addLog("info", "CMD", `Servo ${firmwareId} → ${angle}°`);
+    addLog("info", "CMD", `Servo ${firmwareId} â†’ ${angle}°`);
   }
 }
 
@@ -487,7 +514,7 @@ function toggleLaser() {
 
   const value = state.laser === 1 ? 0 : 1;
   if (wsSend({ cmd: "laser", value })) {
-    addLog("info", "CMD", `Láser → ${value ? "ON" : "OFF"}`);
+    addLog("info", "CMD", `Láser â†’ ${value ? "ON" : "OFF"}`);
   }
 }
 
@@ -567,7 +594,7 @@ function applyCameraUrl(urlValue, announce = true) {
     status.textContent = "Online";
     status.className = "status-badge online";
     if (subtitle) subtitle.textContent = "Transmisión en vivo configurada";
-    if (el("camera-reading")) el("camera-reading").textContent = `Última lectura: ${new Date().toLocaleTimeString("es-PE")}`;
+    if (el("camera-reading")) el("camera-reading").textContent = `Ãšltima lectura: ${new Date().toLocaleTimeString("es-PE")}`;
     if (announce) addLog("ok", "CÁMARA", "Transmisión cargada correctamente.");
   };
 
@@ -646,7 +673,21 @@ export function inicializarSensoresEnVivo() {
 
   const storedWs = localStorage.getItem(STORAGE_WS_URL);
   const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL);
-  if (storedWs && el("esp32-ws-url")) el("esp32-ws-url").value = storedWs;
+
+  const wsInicial =
+    window.location.protocol === "https:" &&
+    /^ws:\/\//i.test(storedWs || "")
+      ? ""
+      : storedWs || "";
+
+  const defaultWs = normalizarWsUrl(wsInicial);
+
+  if (el("esp32-ws-url")) {
+    el("esp32-ws-url").value = defaultWs;
+  }
+
+  localStorage.setItem(STORAGE_WS_URL, defaultWs);
+
   if (storedCamera && el("esp32-camera-url")) el("esp32-camera-url").value = storedCamera;
 
   bindEvents();
@@ -677,3 +718,4 @@ export function aplicarCamaraGuardada() {
   const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL) || "";
   applyCameraUrl(storedCamera, false);
 }
+

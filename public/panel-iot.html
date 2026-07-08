@@ -82,7 +82,7 @@
             </div>
             <label class="sensor-config-field">
               <span>WebSocket del ESP32</span>
-              <input id="esp32-ws-url" type="text" value="ws://192.168.4.1:81" spellcheck="false" autocomplete="off">
+              <input id="esp32-ws-url" type="text" value="" placeholder="Automático: wss://este-dominio/iot-ws?client=panel" spellcheck="false" autocomplete="off">
             </label>
             <label class="sensor-config-field camera-url-field">
               <span>URL de ESP32-CAM</span>
@@ -115,7 +115,7 @@
                   </div>
                   <div class="clock-speed-info">
                     <span>Velocidad según potenciómetro</span>
-                    <strong id="sim-speed-badge">×1</strong>
+                    <strong id="sim-speed-badge">x1</strong>
                     <small id="sim-speed-desc">Sin datos</small>
                     <div class="speed-track"><span id="sim-speed-bar"></span></div>
                   </div>
@@ -195,7 +195,7 @@
                       <p>La última tarjeta se actualiza cuando el ESP32 transmite un UID por WebSocket.</p>
                     </article>
                     <article class="rfid-card">
-                      <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
+                      <h3><i class="ti ti-id-badge-2"></i> Ãšltima lectura</h3>
                       <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector RC522</small></div>
                     </article>
                   </div>
@@ -249,7 +249,7 @@
               </article>
 
               <article class="panel mysql-log-panel">
-                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Últimos eventos guardados en MySQL.</p></div></div>
+                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Ãšltimos eventos guardados en MySQL.</p></div></div>
                 <div id="iot-logs" class="iot-logs"><div class="empty-state">Cargando logs…</div></div>
               </article>
             </aside>
@@ -263,3 +263,4 @@
   <script type="module" src="/assets/js/panel-iot.js"></script>
 </body>
 </html>
+

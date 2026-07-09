@@ -1,4 +1,4 @@
-﻿const { WebSocketServer, WebSocket } = require("ws");
+const { WebSocketServer, WebSocket } = require("ws");
 
 const PANEL_CLIENTS = new Set();
 const ESP32_CLIENTS = new Set();

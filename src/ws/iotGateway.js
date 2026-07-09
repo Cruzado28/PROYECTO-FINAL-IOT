@@ -1,17 +1,34 @@
-const { WebSocketServer, WebSocket } = require("ws");
+﻿const { WebSocketServer, WebSocket } = require("ws");
 
 const PANEL_CLIENTS = new Set();
 const ESP32_CLIENTS = new Set();
+
+function convertirATexto(payload) {
+  if (typeof payload === "string") return payload;
+  if (Buffer.isBuffer(payload)) return payload.toString("utf8");
+  if (payload instanceof ArrayBuffer) return Buffer.from(payload).toString("utf8");
+  if (Array.isArray(payload)) return Buffer.concat(payload).toString("utf8");
+  return String(payload);
+}
 
 function safeSend(socket, payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return false;
   }
 
-  const message =
-    typeof payload === "string" || Buffer.isBuffer(payload)
-      ? payload
-      : JSON.stringify(payload);
+  let message;
+
+  if (typeof payload === "string") {
+    message = payload;
+  } else if (
+    Buffer.isBuffer(payload) ||
+    payload instanceof ArrayBuffer ||
+    Array.isArray(payload)
+  ) {
+    message = convertirATexto(payload);
+  } else {
+    message = JSON.stringify(payload);
+  }
 
   socket.send(message);
   return true;
@@ -31,25 +48,16 @@ function broadcast(targets, payload) {
 
 function getClientRole(requestUrl = "") {
   try {
-    const url = new URL(
-      requestUrl,
-      "http://localhost"
-    );
+    const url = new URL(requestUrl, "http://localhost");
 
     const rawClient =
       url.searchParams.get("client") ||
       url.searchParams.get("role") ||
       "panel";
 
-    const client = rawClient
-      .trim()
-      .toLowerCase();
+    const client = rawClient.trim().toLowerCase();
 
-    if (
-      client === "esp32" ||
-      client === "gateway" ||
-      client === "device"
-    ) {
+    if (client === "esp32" || client === "gateway" || client === "device") {
       return "esp32";
     }
 
@@ -71,7 +79,6 @@ function getGatewayStatus() {
 
 function broadcastGatewayStatus() {
   const status = getGatewayStatus();
-
   broadcast(PANEL_CLIENTS, status);
   broadcast(ESP32_CLIENTS, status);
 }
@@ -88,11 +95,7 @@ function attachIotGateway(server) {
     socket.role = role;
     socket.isAlive = true;
 
-    const registry =
-      role === "esp32"
-        ? ESP32_CLIENTS
-        : PANEL_CLIENTS;
-
+    const registry = role === "esp32" ? ESP32_CLIENTS : PANEL_CLIENTS;
     registry.add(socket);
 
     safeSend(socket, {
@@ -101,7 +104,7 @@ function attachIotGateway(server) {
       role,
       message:
         role === "esp32"
-          ? "ESP32 o gateway físico conectado al puente IoT."
+          ? "ESP32 conectado al puente IoT."
           : "Panel web conectado al puente IoT.",
       ...getGatewayStatus()
     });
@@ -109,7 +112,13 @@ function attachIotGateway(server) {
     broadcastGatewayStatus();
 
     console.log(
-      `[IoT WS] Cliente conectado como ${role}. Paneles: ${PANEL_CLIENTS.size}. Dispositivos: ${ESP32_CLIENTS.size}.`
+      "[IoT WS] Cliente conectado como " +
+        role +
+        ". Paneles: " +
+        PANEL_CLIENTS.size +
+        ". Dispositivos: " +
+        ESP32_CLIENTS.size +
+        "."
     );
 
     socket.on("pong", () => {
@@ -117,15 +126,16 @@ function attachIotGateway(server) {
     });
 
     socket.on("message", (message) => {
+      const payload = convertirATexto(message);
+
       if (role === "panel") {
-        const sent = broadcast(ESP32_CLIENTS, message);
+        const sent = broadcast(ESP32_CLIENTS, payload);
 
         if (sent === 0) {
           safeSend(socket, {
             gateway: true,
             type: "warning",
-            message:
-              "No hay ESP32 o gateway físico conectado para recibir el comando.",
+            message: "No hay ESP32 conectado para recibir el comando.",
             timestamp: new Date().toISOString()
           });
         }
@@ -133,24 +143,27 @@ function attachIotGateway(server) {
         return;
       }
 
-      broadcast(PANEL_CLIENTS, message);
+      broadcast(PANEL_CLIENTS, payload);
     });
 
     socket.on("close", () => {
       registry.delete(socket);
 
       console.log(
-        `[IoT WS] Cliente desconectado: ${role}. Paneles: ${PANEL_CLIENTS.size}. Dispositivos: ${ESP32_CLIENTS.size}.`
+        "[IoT WS] Cliente desconectado: " +
+          role +
+          ". Paneles: " +
+          PANEL_CLIENTS.size +
+          ". Dispositivos: " +
+          ESP32_CLIENTS.size +
+          "."
       );
 
       broadcastGatewayStatus();
     });
 
     socket.on("error", (error) => {
-      console.error(
-        `[IoT WS] Error en cliente ${role}:`,
-        error.message
-      );
+      console.error("[IoT WS] Error en cliente " + role + ":", error.message);
     });
   });
 
@@ -170,9 +183,7 @@ function attachIotGateway(server) {
     clearInterval(heartbeat);
   });
 
-  console.log(
-    "[IoT WS] Gateway inicializado en /iot-ws"
-  );
+  console.log("[IoT WS] Gateway inicializado en /iot-ws");
 
   return wss;
 }

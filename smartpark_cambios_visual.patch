@@ -1,0 +1,599 @@
+diff --git a/public/assets/css/panel-iot.css b/public/assets/css/panel-iot.css
+index 9edb2dd..5867173 100644
+--- a/public/assets/css/panel-iot.css
++++ b/public/assets/css/panel-iot.css
+@@ -46,3 +46,15 @@ body.embed-mode .toast-container{
+ body.embed-dashboard .dashboard-body{align-items:start}
+ body.embed-dashboard .left-column>.panel{height:100%}
+ @media(max-width:1000px){body.embed-dashboard .dashboard-body{grid-template-columns:1fr}}
++
++/* Tema claro/oscuro sincronizado con el panel principal */
++:root[data-theme="light"]{--bg:#f4f7fb;--surface:#ffffff;--card:#ffffff;--border:#d8e0ef;--accent:#2563eb;--accent-dim:rgba(37,99,235,.12);--green:#0f9f6e;--green-dim:rgba(15,159,110,.12);--red:#dc2626;--red-dim:rgba(220,38,38,.12);--warn:#d97706;--warn-dim:rgba(217,119,6,.12);--purple:#7c3aed;--purple-dim:rgba(124,58,237,.12);--text:#172033;--sub:#4b5875;--muted:#7b879f}
++:root[data-theme="light"] body{background:var(--bg);color:var(--text)}
++:root[data-theme="light"] input,:root[data-theme="light"] select{background:#fff;color:var(--text);border-color:var(--border)}
++:root[data-theme="light"] .camera-panel{background:#eef3fb}
++:root[data-theme="light"] .camera-grid{background-image:linear-gradient(rgba(37,99,235,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(37,99,235,.08) 1px,transparent 1px)}
++:root[data-theme="light"] .camera-footer{background:rgba(255,255,255,.86);color:var(--sub)}
++.rfid-grid-three{grid-template-columns:1fr 1fr 1.1fr}
++.sensor-page-wrap.manual-locked .manual-control{opacity:.45;cursor:not-allowed;filter:grayscale(.25)}
++@media(max-width:1180px){.rfid-grid-three{grid-template-columns:1fr 1fr}.rfid-grid-three .rfid-card:last-child{grid-column:1/-1}}
++@media(max-width:760px){.rfid-grid-three{grid-template-columns:1fr}.rfid-grid-three .rfid-card:last-child{grid-column:auto}}
+diff --git a/public/assets/js/admin.js b/public/assets/js/admin.js
+index e6afd66..92ec055 100644
+--- a/public/assets/js/admin.js
++++ b/public/assets/js/admin.js
+@@ -649,6 +649,29 @@ window.fetch = async function (recurso, opciones = {}) {
+ 
+ let sistemaInicializado = false;
+ 
++function obtenerTemaActual(){
++  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
++}
++
++function obtenerAcentoActual(){
++  return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4f8ef7';
++}
++
++function enviarTemaAFrame(frame){
++  if (!frame || !frame.contentWindow) return;
++  frame.contentWindow.postMessage({
++    type: 'smartparking:theme',
++    theme: obtenerTemaActual(),
++    accent: obtenerAcentoActual()
++  }, window.location.origin);
++}
++
++function sincronizarTemaEmbebidos(){
++  ['dashboard-modern-frame','sensors-live-frame'].forEach((id)=>{
++    enviarTemaAFrame(document.getElementById(id));
++  });
++}
++
+ function cargarVistaIntegrada(tipo) {
+   const configuracion = {
+     dashboard: {
+@@ -671,6 +694,7 @@ function cargarVistaIntegrada(tipo) {
+   frame.addEventListener("load", () => {
+     frame.hidden = false;
+     if (loading) loading.style.display = "none";
++    enviarTemaAFrame(frame);
+   }, { once: true });
+ 
+   frame.src = frame.dataset.src;
+@@ -929,6 +953,7 @@ function toggleTheme(){
+   const isDark=html.getAttribute('data-theme')==='dark';
+   html.setAttribute('data-theme',isDark?'light':'dark');
+   updateThemeUI();
++  sincronizarTemaEmbebidos();
+   if(charts.hourly)reinitCharts();
+ }
+ function updateThemeUI(){
+@@ -951,6 +976,7 @@ function setAccent(color,hover,el){
+   document.documentElement.style.setProperty('--accent-hover',hover);
+   document.querySelectorAll('.color-opt').forEach(o=>o.classList.remove('active'));
+   el.classList.add('active');
++  sincronizarTemaEmbebidos();
+   showToast('success','Color principal actualizado','fa-palette');
+ }
+ 
+@@ -4267,6 +4293,7 @@ function aplicarPreferenciasVisuales(
+   );
+ 
+   updateThemeUI();
++  sincronizarTemaEmbebidos();
+ 
+   if (charts.hourly) {
+     reinitCharts();
+diff --git a/public/assets/js/sensors-live.js b/public/assets/js/sensors-live.js
+index df9a71d..229e716 100644
+--- a/public/assets/js/sensors-live.js
++++ b/public/assets/js/sensors-live.js
+@@ -1,6 +1,7 @@
+ const STORAGE_WS_URL = "smartParkingEsp32WsUrl";
+ const STORAGE_CAMERA_URL = "smartParkingEsp32CameraUrl";
+ const MAX_LOGS = 150;
++const SIM_SPEED_MAX = 1440;
+ 
+ const state = {
+   initialized: false,
+@@ -15,7 +16,10 @@ const state = {
+   ldr: null,
+   pot: null,
+   uid: null,
++  lastReader: null,
+   rfidReads: 0,
++  rfidEntrada: 0,
++  rfidSalida: 0,
+   writeWaiting: false,
+   logs: [],
+   autoScroll: true,
+@@ -30,31 +34,19 @@ function el(id) {
+ }
+ 
+ function obtenerGatewayWsUrl() {
+-  const protocolo =
+-    window.location.protocol === "https:"
+-      ? "wss:"
+-      : "ws:";
+-
++  const protocolo = window.location.protocol === "https:" ? "wss:" : "ws:";
+   return `${protocolo}//${window.location.host}/iot-ws?client=panel`;
+ }
+ 
+ function normalizarWsUrl(valor) {
+   const texto = String(valor || "").trim();
+ 
+-  if (
+-    !texto ||
+-    texto.toLowerCase() === "auto" ||
+-    texto.toLowerCase() === "gateway"
+-  ) {
++  if (!texto || texto.toLowerCase() === "auto" || texto.toLowerCase() === "gateway") {
+     return obtenerGatewayWsUrl();
+   }
+ 
+   if (/^\/iot-ws/i.test(texto)) {
+-    const protocolo =
+-      window.location.protocol === "https:"
+-        ? "wss:"
+-        : "ws:";
+-
++    const protocolo = window.location.protocol === "https:" ? "wss:" : "ws:";
+     return `${protocolo}//${window.location.host}${texto}`;
+   }
+ 
+@@ -63,12 +55,42 @@ function normalizarWsUrl(valor) {
+   return `ws://${texto.includes(":") ? texto : `${texto}:81`}`;
+ }
+ 
++function aplicarTema(theme, accent) {
++  const tema = theme === "light" ? "light" : "dark";
++  document.documentElement.setAttribute("data-theme", tema);
++  if (accent) document.documentElement.style.setProperty("--accent", accent);
++}
++
++window.addEventListener("message", (evento) => {
++  if (evento.origin !== window.location.origin) return;
++  const data = evento.data || {};
++  if (data.type === "smartparking:theme") aplicarTema(data.theme, data.accent);
++});
++
++function updateRfidConnectionIndicators(entrada = state.rfidEntrada, salida = state.rfidSalida) {
++  state.rfidEntrada = Number(entrada) === 1 ? 1 : 0;
++  state.rfidSalida = Number(salida) === 1 ? 1 : 0;
++
++  const entryDot = el("rfid-entry-status-dot") || el("rfid-status-dot");
++  const entryText = el("rfid-entry-status-text") || el("rfid-status-text");
++  const exitDot = el("rfid-exit-status-dot");
++  const exitText = el("rfid-exit-status-text");
++
++  if (entryDot) entryDot.className = `sensor-pill ${state.rfidEntrada ? "ok" : "off"}`;
++  if (entryText) entryText.textContent = state.rfidEntrada
++    ? "Conectado · lectura/escritura activa"
++    : "Sin conexión al lector de entrada";
++
++  if (exitDot) exitDot.className = `sensor-pill ${state.rfidSalida ? "ok" : "off"}`;
++  if (exitText) exitText.textContent = state.rfidSalida
++    ? "Conectado · cobro activo"
++    : "Sin conexión al lector de salida";
++}
++
+ function setConnectionStatus(status, detail = "") {
+   const indicator = el("esp32-indicator");
+   const title = el("esp32-status-text");
+   const subtitle = el("esp32-status-detail");
+-  const rfidDot = el("rfid-status-dot");
+-  const rfidText = el("rfid-status-text");
+ 
+   if (!indicator || !title || !subtitle) return;
+ 
+@@ -77,18 +99,14 @@ function setConnectionStatus(status, detail = "") {
+   if (status === "connected") {
+     title.textContent = "ESP32 conectado";
+     subtitle.textContent = detail || "Datos recibidos en tiempo real.";
+-    if (rfidDot) rfidDot.className = "sensor-pill ok";
+-    if (rfidText) rfidText.textContent = "Conectado · esperando tarjeta";
+   } else if (status === "connecting") {
+     title.textContent = "Conectando al ESP32…";
+     subtitle.textContent = detail || "Abriendo conexión WebSocket.";
+-    if (rfidDot) rfidDot.className = "sensor-pill off";
+-    if (rfidText) rfidText.textContent = "Conectando al lector";
++    updateRfidConnectionIndicators(0, 0);
+   } else {
+     title.textContent = "ESP32 desconectado";
+     subtitle.textContent = detail || "Sin datos en tiempo real.";
+-    if (rfidDot) rfidDot.className = "sensor-pill off";
+-    if (rfidText) rfidText.textContent = "Sin conexión al ESP32";
++    updateRfidConnectionIndicators(0, 0);
+   }
+ }
+ 
+@@ -211,6 +229,7 @@ function conectarESP32(manual = true) {
+     if (socket !== state.socket) return;
+     setConnectionStatus("connected", url);
+     addLog("ok", "WS", "Conexión establecida. Esperando datos reales del ESP32.");
++    wsSend({ cmd: "mode", mode: state.mode }, false);
+   };
+ 
+   socket.onmessage = (event) => {
+@@ -237,9 +256,9 @@ function conectarESP32(manual = true) {
+   };
+ }
+ 
+-function wsSend(payload) {
++function wsSend(payload, logWhenDisconnected = true) {
+   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+-    addLog("warn", "CMD", "Comando no enviado: el ESP32 está desconectado.");
++    if (logWhenDisconnected) addLog("warn", "CMD", "Comando no enviado: el ESP32 está desconectado.");
+     return false;
+   }
+ 
+@@ -315,26 +334,45 @@ function updateLdr(value) {
+   if (dot) dot.className = `sensor-pill ${free ? "ok" : "on"}`;
+ }
+ 
+-function updatePot(rawValue) {
++function formatSpeed(speed) {
++  const value = Number(speed) || 1;
++  if (value < 2) return "x1";
++  if (value < 10) return `x${value.toFixed(1)}`;
++  return `x${Math.round(value)}`;
++}
++
++function describeSpeed(speed) {
++  const value = Number(speed) || 1;
++  if (value < 1.5) return "Tiempo real";
++  if (value >= SIM_SPEED_MAX - 2) return "1 min real = 1 día simulado";
++
++  const simulatedMinutes = value;
++  if (simulatedMinutes >= 60) {
++    return `1 min real = ${(simulatedMinutes / 60).toFixed(1)} h simuladas`;
++  }
++
++  return `1 min real = ${Math.round(simulatedMinutes)} min simulados`;
++}
++
++function updatePot(rawValue, speedFromDevice) {
+   const raw = Math.max(0, Math.min(4095, Number(rawValue) || 0));
+   const percentage = raw / 4095;
+-  const speed = 1 + percentage * 59;
++  const speed = Number(speedFromDevice) > 0
++    ? Number(speedFromDevice)
++    : 1 + percentage * (SIM_SPEED_MAX - 1);
+   const offset = 132 - percentage * 132;
+-  const speedText = speed < 2 ? "x1" : speed < 10 ? `x${speed.toFixed(1)}` : `x${Math.round(speed)}`;
++  const speedText = formatSpeed(speed);
+ 
+   const arc = el("pwm-arc");
+   if (arc) {
+     arc.style.strokeDashoffset = offset.toFixed(1);
+-    const red = Math.round(79 + percentage * 166);
+-    const green = Math.round(142 + percentage * 24);
+-    const blue = Math.round(247 - percentage * 212);
+-    arc.style.stroke = `rgb(${red},${green},${blue})`;
++    arc.style.stroke = "var(--accent)";
+   }
+ 
+   if (el("pwm-val")) el("pwm-val").textContent = speedText;
+-  if (el("pwm-sub")) el("pwm-sub").innerHTML = `ADC: ${raw} / 4095<br>Velocidad: ${speedText}`;
++  if (el("pwm-sub")) el("pwm-sub").innerHTML = `ADC: ${raw} / 4095<br>${describeSpeed(speed)}`;
+   if (el("sim-speed-badge")) el("sim-speed-badge").textContent = speedText;
+-  if (el("sim-speed-desc")) el("sim-speed-desc").textContent = speed < 1.5 ? "Tiempo real" : `1 min = ${speed.toFixed(0)} min simulados`;
++  if (el("sim-speed-desc")) el("sim-speed-desc").textContent = describeSpeed(speed);
+   if (el("sim-speed-bar")) el("sim-speed-bar").style.width = `${(percentage * 100).toFixed(1)}%`;
+ 
+   state.simSpeed = speed;
+@@ -355,12 +393,13 @@ function addDataRow(container, key, value, className = "") {
+   container.appendChild(row);
+ }
+ 
+-function renderRfid(uid, cardData) {
++function renderRfid(uid, cardData, reader = "") {
+   const container = el("rfid-result");
+   if (!container) return;
+ 
+   container.className = "";
+   container.replaceChildren();
++  addDataRow(container, "Lector", reader === "salida" ? "Salida / pago" : reader === "entrada" ? "Entrada / registro" : "No indicado");
+   addDataRow(container, "UID", uid, "uid");
+   addDataRow(container, "Hora", new Date().toLocaleTimeString("es-PE", { hour12: false }));
+ 
+@@ -373,6 +412,7 @@ function renderRfid(uid, cardData) {
+     addDataRow(container, "DNI", cardData.dni || "—");
+     addDataRow(container, "Teléfono", cardData.telefono || "—");
+     addDataRow(container, "Saldo", `S/ ${cardData.saldo || "0.00"}`);
++    addDataRow(container, "Ingreso sim.", cardData.ingresoMin ? `min ${cardData.ingresoMin}` : "Sin ingreso activo");
+   } else {
+     addDataRow(container, "Datos", "Tarjeta sin información grabada");
+   }
+@@ -397,8 +437,8 @@ function handleWriteStatus(data) {
+     state.writeWaiting = true;
+     button.disabled = true;
+     cancel.hidden = false;
+-    setWriteStatus("Esperando tarjeta… acerca la NTAG215 al lector RC522.", "info");
+-    addLog("info", "RFID", "Modo escritura activado.");
++    setWriteStatus("Esperando tarjeta… acércala al RFID de entrada, no al de salida.", "info");
++    addLog("info", "RFID", "Modo escritura activado en lector de entrada.");
+   } else if (data.writeStatus === "success") {
+     state.writeWaiting = false;
+     button.disabled = false;
+@@ -411,6 +451,9 @@ function handleWriteStatus(data) {
+     cancel.hidden = true;
+     setWriteStatus("No se pudo escribir la tarjeta. Verifica que sea compatible y vuelve a intentar.", "error");
+     addLog("error", "RFID", "Fallo durante la escritura de la tarjeta.");
++  } else if (data.writeStatus === "wrong_reader") {
++    setWriteStatus("La tarjeta se acercó al lector de salida. Para registrar datos, usa el RFID de entrada.", "error");
++    addLog("warn", "RFID", "Escritura rechazada porque se usó el lector de salida.");
+   } else if (data.writeStatus === "cancelled") {
+     state.writeWaiting = false;
+     button.disabled = false;
+@@ -420,10 +463,43 @@ function handleWriteStatus(data) {
+   }
+ }
+ 
++function handleEntryStatus(data) {
++  if (data.entryStatus === "success") {
++    addLog("ok", "ENTRADA", data.message || "Ingreso registrado y barrera abierta.");
++  } else if (data.entryStatus === "error") {
++    addLog("error", "ENTRADA", data.message || "No se pudo procesar la entrada.");
++  }
++}
++
++function handlePaymentStatus(data) {
++  const base = data.message || (data.paymentStatus === "success" ? "Pago aplicado." : "Pago rechazado.");
++  const extra = data.paymentStatus === "success"
++    ? ` Pago: S/ ${Number(data.pago || 0).toFixed(2)} · Nuevo saldo: S/ ${Number(data.saldoNuevo || 0).toFixed(2)}`
++    : data.pago !== undefined
++      ? ` Pago requerido: S/ ${Number(data.pago || 0).toFixed(2)}`
++      : "";
++
++  addLog(data.paymentStatus === "success" ? "ok" : "error", "SALIDA", `${base}${extra}`);
++}
++
++function syncModeFromDevice(mode) {
++  if (mode !== "live" && mode !== "test") return;
++  setMode(mode, false);
++}
++
+ function handleState(data) {
+   if (!data || typeof data !== "object") return;
++  if (data.gateway === true) return;
+ 
+   if (data.writeStatus !== undefined) handleWriteStatus(data);
++  if (data.entryStatus !== undefined) handleEntryStatus(data);
++  if (data.paymentStatus !== undefined) handlePaymentStatus(data);
++  if (data.cmdStatus === "blocked") addLog("warn", "MODO", data.message || "Comando bloqueado.");
++  if (data.mode !== undefined) syncModeFromDevice(data.mode);
++
++  if (data.rfidEntrada !== undefined || data.rfidSalida !== undefined) {
++    updateRfidConnectionIndicators(data.rfidEntrada ?? state.rfidEntrada, data.rfidSalida ?? state.rfidSalida);
++  }
+ 
+   if (data.servoEntrada !== undefined && Number(data.servoEntrada) !== state.servoEntrada) {
+     state.servoEntrada = Number(data.servoEntrada);
+@@ -451,42 +527,51 @@ function handleState(data) {
+ 
+   if (data.pot !== undefined) {
+     state.pot = Number(data.pot);
+-    updatePot(state.pot);
+-  }
+-
+-  if (data.uid !== undefined && data.uid && data.uid !== "----" && data.uid !== state.uid) {
+-    state.uid = String(data.uid);
+-    state.rfidReads += 1;
+-    renderRfid(state.uid, data.cardData);
+-    addLog("ok", "RFID", `Tarjeta detectada · ${state.uid}`);
++    updatePot(state.pot, data.simSpeed);
++  }
++
++  if (data.uid !== undefined && data.uid && data.uid !== "----") {
++    const incomingUid = String(data.uid);
++    const incomingReader = String(data.lastReader || "");
++    const uniqueRead = incomingUid !== state.uid || incomingReader !== state.lastReader;
++    if (uniqueRead) {
++      state.uid = incomingUid;
++      state.lastReader = incomingReader;
++      state.rfidReads += 1;
++      renderRfid(state.uid, data.cardData, incomingReader);
++      addLog("ok", "RFID", `Tarjeta detectada en ${incomingReader || "lector"} · ${state.uid}`);
++    }
+   }
+ }
+ 
+-function setMode(mode) {
+-  state.mode = mode;
++function setMode(mode, notifyDevice = true) {
++  state.mode = mode === "live" ? "live" : "test";
+   const page = document.querySelector(".sensor-page-wrap");
+   const testButton = el("mode-btn-test");
+   const liveButton = el("mode-btn-live");
+   const subtitle = el("mode-switch-sub");
+   const banner = el("mode-banner");
+ 
+-  const live = mode === "live";
++  const live = state.mode === "live";
+   page?.classList.toggle("manual-locked", live);
+   testButton?.classList.toggle("active-test", !live);
+   liveButton?.classList.toggle("active-live", live);
+ 
+   if (subtitle) subtitle.textContent = live
+-    ? "Funcionamiento — supervisión activa y controles manuales bloqueados"
++    ? "Funcionamiento — RFID de entrada registra ingreso y RFID de salida descuenta saldo"
+     : "Modo prueba — controles manuales habilitados";
+ 
+   if (banner) {
+     banner.className = `mode-banner ${live ? "live" : "test"}`;
+     banner.innerHTML = live
+-      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: este panel supervisa el hardware; la automatización segura debe ejecutarse en el firmware o backend.</span>'
++      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: la entrada escribe el ingreso; la salida cobra, actualiza saldo y abre la barrera si el saldo alcanza.</span>'
+       : '<i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span>';
+   }
+ 
+-  addLog("info", "MODO", live ? "Funcionamiento" : "Prueba");
++  if (notifyDevice) {
++    wsSend({ cmd: "mode", mode: state.mode });
++    addLog("info", "MODO", live ? "Funcionamiento" : "Prueba");
++  }
+ }
+ 
+ function toggleServo(id) {
+@@ -502,7 +587,7 @@ function toggleServo(id) {
+   const firmwareId = isEntry ? "entrada" : "salida";
+ 
+   if (wsSend({ cmd: "servo", id: firmwareId, angle })) {
+-    addLog("info", "CMD", `Servo ${firmwareId} â†’ ${angle}°`);
++    addLog("info", "CMD", `Servo ${firmwareId} → ${angle}°`);
+   }
+ }
+ 
+@@ -514,7 +599,7 @@ function toggleLaser() {
+ 
+   const value = state.laser === 1 ? 0 : 1;
+   if (wsSend({ cmd: "laser", value })) {
+-    addLog("info", "CMD", `Láser â†’ ${value ? "ON" : "OFF"}`);
++    addLog("info", "CMD", `Láser → ${value ? "ON" : "OFF"}`);
+   }
+ }
+ 
+@@ -544,8 +629,8 @@ function sendWriteCard() {
+   }
+ 
+   if (wsSend(payload)) {
+-    setWriteStatus("Solicitud enviada. Esperando respuesta del ESP32…", "info");
+-    addLog("info", "RFID", `Datos enviados para escritura${payload.placa ? ` · ${payload.placa}` : ""}.`);
++    setWriteStatus("Solicitud enviada. Acerca la tarjeta al RFID de entrada…", "info");
++    addLog("info", "RFID", `Datos enviados para escritura en entrada${payload.placa ? ` · ${payload.placa}` : ""}.`);
+   }
+ }
+ 
+@@ -594,7 +679,7 @@ function applyCameraUrl(urlValue, announce = true) {
+     status.textContent = "Online";
+     status.className = "status-badge online";
+     if (subtitle) subtitle.textContent = "Transmisión en vivo configurada";
+-    if (el("camera-reading")) el("camera-reading").textContent = `Ãšltima lectura: ${new Date().toLocaleTimeString("es-PE")}`;
++    if (el("camera-reading")) el("camera-reading").textContent = `Última lectura: ${new Date().toLocaleTimeString("es-PE")}`;
+     if (announce) addLog("ok", "CÁMARA", "Transmisión cargada correctamente.");
+   };
+ 
+@@ -674,25 +759,21 @@ export function inicializarSensoresEnVivo() {
+   const storedWs = localStorage.getItem(STORAGE_WS_URL);
+   const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL);
+ 
+-  const wsInicial =
+-    window.location.protocol === "https:" &&
+-    /^ws:\/\//i.test(storedWs || "")
+-      ? ""
+-      : storedWs || "";
++  const wsInicial = window.location.protocol === "https:" && /^ws:\/\//i.test(storedWs || "")
++    ? ""
++    : storedWs || "";
+ 
+   const defaultWs = normalizarWsUrl(wsInicial);
+ 
+-  if (el("esp32-ws-url")) {
+-    el("esp32-ws-url").value = defaultWs;
+-  }
+-
++  if (el("esp32-ws-url")) el("esp32-ws-url").value = defaultWs;
+   localStorage.setItem(STORAGE_WS_URL, defaultWs);
+ 
+   if (storedCamera && el("esp32-camera-url")) el("esp32-camera-url").value = storedCamera;
+ 
+   bindEvents();
+-  setMode("test");
++  setMode("test", false);
+   setAutoScroll(true);
++  updateRfidConnectionIndicators(0, 0);
+   applyCameraUrl(storedCamera || "", false);
+ 
+   state.clockTimer = setInterval(tickSimulationClock, 100);
+@@ -718,4 +799,3 @@ export function aplicarCamaraGuardada() {
+   const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL) || "";
+   applyCameraUrl(storedCamera, false);
+ }
+-
+diff --git a/public/panel-iot.html b/public/panel-iot.html
+index 2c0e589..36b15e7 100644
+--- a/public/panel-iot.html
++++ b/public/panel-iot.html
+@@ -1,5 +1,5 @@
+ <!DOCTYPE html>
+-<html lang="es">
++<html lang="es" data-theme="dark">
+ <head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+@@ -180,23 +180,29 @@
+               </section>
+ 
+               <section class="sensor-group-card">
+-                <div class="sensor-group-title"><i class="ti ti-scan"></i> Módulo RFID — RC522 / NTAG215</div>
++                <div class="sensor-group-title"><i class="ti ti-scan"></i> Doble módulo RFID — RC522 / NTAG215</div>
+                 <div class="rfid-tabs">
+-                  <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Leer</button>
++                  <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Lectores</button>
+                   <button type="button" class="rfid-tab" data-rfid-page="rfid-write"><i class="ti ti-edit"></i> Escribir tarjeta</button>
+                 </div>
+ 
+                 <div id="rfid-read" class="rfid-page active">
+-                  <div class="rfid-grid">
++                  <div class="rfid-grid rfid-grid-three">
+                     <article class="rfid-card">
+-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-nfc"></i></div><div><strong>Lector RFID</strong><span>RC522 · SPI · ESP32</span></div></div>
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de entrada</strong><span>Lectura + escritura · RC522</span></div></div>
+                       <div class="gpio-list"><span>SS: GPIO 5</span><span>RST: GPIO 4</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
+-                      <div class="rfid-connection"><span id="rfid-status-dot" class="sensor-pill off"></span><span id="rfid-status-text">Sin conexión al ESP32</span></div>
+-                      <p>La última tarjeta se actualiza cuando el ESP32 transmite un UID por WebSocket.</p>
++                      <div class="rfid-connection"><span id="rfid-entry-status-dot" class="sensor-pill off"></span><span id="rfid-entry-status-text">Sin conexión al ESP32</span></div>
++                      <p>Este lector registra la entrada, permite escribir nuevas tarjetas y guarda el minuto simulado de ingreso.</p>
++                    </article>
++                    <article class="rfid-card">
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de salida</strong><span>Lectura + cobro · RC522</span></div></div>
++                      <div class="gpio-list"><span>SS: GPIO 17</span><span>RST: GPIO 16</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
++                      <div class="rfid-connection"><span id="rfid-exit-status-dot" class="sensor-pill off"></span><span id="rfid-exit-status-text">Sin conexión al ESP32</span></div>
++                      <p>Este lector calcula el pago, descuenta el saldo y reescribe la tarjeta antes de abrir la salida.</p>
+                     </article>
+                     <article class="rfid-card">
+-                      <h3><i class="ti ti-id-badge-2"></i> Ãšltima lectura</h3>
+-                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector RC522</small></div>
++                      <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
++                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de entrada o salida</small></div>
+                     </article>
+                   </div>
+                 </div>
+@@ -204,7 +210,7 @@
+                 <div id="rfid-write" class="rfid-page">
+                   <div class="rfid-grid">
+                     <article class="rfid-card">
+-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se enviarán al firmware para escritura</span></div></div>
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán únicamente desde el RFID de entrada</span></div></div>
+                       <div class="write-grid">
+                         <label class="full"><span>Carro o modelo</span><input id="rfid-car" type="text" placeholder="Toyota Corolla"></label>
+                         <label><span>Marca</span><input id="rfid-brand" type="text" placeholder="Toyota"></label>
+@@ -215,14 +221,14 @@
+                         <label><span>DNI</span><input id="rfid-dni" type="text" maxlength="8" inputmode="numeric" placeholder="45678912"></label>
+                         <label><span>Tipo</span><select id="rfid-type"><option value="Sedan">Sedán</option><option value="SUV">SUV</option><option value="Deportivo">Deportivo</option><option value="Hatchback">Hatchback</option><option value="Pickup">Pickup</option><option value="Camioneta">Camioneta / Van</option><option value="Moto">Moto</option></select></label>
+                       </div>
+-                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta</button>
++                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta de entrada</button>
+                       <button id="btn-rfid-cancel" class="rfid-cancel-button" type="button" hidden>Cancelar escritura</button>
+                       <div id="rfid-write-status" class="write-status" hidden></div>
+                     </article>
+                     <article class="rfid-card instructions-card">
+                       <h3><i class="ti ti-info-circle"></i> Procedimiento</h3>
+-                      <ol><li>Completa los datos.</li><li>Presiona “Escribir en tarjeta”.</li><li>Acerca la NTAG215 al RC522.</li><li>Espera la confirmación enviada por el ESP32.</li></ol>
+-                      <p><strong>Importante:</strong> esta acción puede sobrescribir los datos anteriores de la tarjeta.</p>
++                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir en tarjeta de entrada”.</li><li>Acerca la NTAG215 al lector RFID de entrada.</li><li>En funcionamiento, la entrada guarda el ingreso y la salida descuenta el pago.</li></ol>
++                      <p><strong>Importante:</strong> el lector de salida no escribe registros nuevos; solo actualiza el saldo después del cobro.</p>
+                     </article>
+                   </div>
+                 </div>
+@@ -249,7 +255,7 @@
+               </article>
+ 
+               <article class="panel mysql-log-panel">
+-                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Ãšltimos eventos guardados en MySQL.</p></div></div>
++                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Últimos eventos guardados en MySQL.</p></div></div>
+                 <div id="iot-logs" class="iot-logs"><div class="empty-state">Cargando logs…</div></div>
+               </article>
+             </aside>

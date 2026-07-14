@@ -1,0 +1,2578 @@
+diff --git a/camera_module/firmware/CameraWebServer/CameraWebServer.ino b/camera_module/firmware/CameraWebServer/CameraWebServer.ino
+new file mode 100644
+index 0000000..512d1a0
+--- /dev/null
++++ b/camera_module/firmware/CameraWebServer/CameraWebServer.ino
+@@ -0,0 +1,127 @@
++#include <WiFi.h>
++#include <WebServer.h>
++#include "esp_camera.h"
++#include "board_config.h"
++
++const char *ssid = "TU_WIFI";
++const char *password = "TU_PASSWORD";
++
++WebServer server(80);
++
++#define LED_PIN 4
++
++camera_config_t configActual;  // guardada globalmente para poder reiniciar al cambiar XCLK
++
++void handleCapture() {
++  camera_fb_t *fb = esp_camera_fb_get();
++  if (!fb) {
++    server.send(500, "text/plain", "Error de captura");
++    return;
++  }
++  server.sendHeader("Access-Control-Allow-Origin", "*");
++  server.send_P(200, "image/jpeg", (const char *)fb->buf, fb->len);
++  esp_camera_fb_return(fb);
++}
++
++void handleLed() {
++  server.sendHeader("Access-Control-Allow-Origin", "*");
++  if (!server.hasArg("nivel")) {
++    server.send(400, "text/plain", "falta parametro nivel (0-255)");
++    return;
++  }
++  int nivel = constrain(server.arg("nivel").toInt(), 0, 255);
++  ledcWrite(LED_PIN, nivel);
++  server.send(200, "text/plain", "OK nivel=" + String(nivel));
++}
++
++void handleConfig() {
++  server.sendHeader("Access-Control-Allow-Origin", "*");
++  sensor_t *s = esp_camera_sensor_get();
++  if (server.hasArg("quality"))    s->set_quality(s, server.arg("quality").toInt());
++  if (server.hasArg("brightness")) s->set_brightness(s, server.arg("brightness").toInt());
++  if (server.hasArg("contrast"))   s->set_contrast(s, server.arg("contrast").toInt());
++  if (server.hasArg("saturation")) s->set_saturation(s, server.arg("saturation").toInt());
++  server.send(200, "text/plain", "OK");
++}
++
++void handleXclk() {
++  server.sendHeader("Access-Control-Allow-Origin", "*");
++  if (!server.hasArg("mhz")) {
++    server.send(400, "text/plain", "falta parametro mhz");
++    return;
++  }
++  int mhz = constrain(server.arg("mhz").toInt(), 6, 20);
++  esp_camera_deinit();
++  configActual.xclk_freq_hz = mhz * 1000000;
++  esp_err_t err = esp_camera_init(&configActual);
++  if (err != ESP_OK) {
++    server.send(500, "text/plain", "Error al reiniciar camara");
++    return;
++  }
++  sensor_t *s = esp_camera_sensor_get();
++  s->set_vflip(s, 1);
++  server.send(200, "text/plain", "OK xclk=" + String(mhz) + "MHz");
++}
++
++void setup() {
++  Serial.begin(115200);
++  Serial.println();
++
++  configActual.ledc_channel = LEDC_CHANNEL_0;
++  configActual.ledc_timer = LEDC_TIMER_0;
++  configActual.pin_d0 = Y2_GPIO_NUM;
++  configActual.pin_d1 = Y3_GPIO_NUM;
++  configActual.pin_d2 = Y4_GPIO_NUM;
++  configActual.pin_d3 = Y5_GPIO_NUM;
++  configActual.pin_d4 = Y6_GPIO_NUM;
++  configActual.pin_d5 = Y7_GPIO_NUM;
++  configActual.pin_d6 = Y8_GPIO_NUM;
++  configActual.pin_d7 = Y9_GPIO_NUM;
++  configActual.pin_xclk = XCLK_GPIO_NUM;
++  configActual.pin_pclk = PCLK_GPIO_NUM;
++  configActual.pin_vsync = VSYNC_GPIO_NUM;
++  configActual.pin_href = HREF_GPIO_NUM;
++  configActual.pin_sccb_sda = SIOD_GPIO_NUM;
++  configActual.pin_sccb_scl = SIOC_GPIO_NUM;
++  configActual.pin_pwdn = PWDN_GPIO_NUM;
++  configActual.pin_reset = RESET_GPIO_NUM;
++  configActual.xclk_freq_hz = 18000000;
++  configActual.pixel_format = PIXFORMAT_JPEG;
++  configActual.frame_size = FRAMESIZE_VGA;
++  configActual.jpeg_quality = 12;
++  configActual.fb_count = 2;
++  configActual.fb_location = CAMERA_FB_IN_PSRAM;
++  configActual.grab_mode = CAMERA_GRAB_LATEST;
++
++  esp_err_t err = esp_camera_init(&configActual);
++  if (err != ESP_OK) {
++    Serial.printf("Error camara: 0x%x\n", err);
++    return;
++  }
++
++  sensor_t *s = esp_camera_sensor_get();
++  s->set_vflip(s, 1);
++
++  ledcAttach(LED_PIN, 5000, 8);
++  ledcWrite(LED_PIN, 0);
++
++  WiFi.setSleep(false);
++  WiFi.begin(ssid, password);
++  Serial.print("Conectando WiFi");
++  while (WiFi.status() != WL_CONNECTED) {
++    delay(500);
++    Serial.print(".");
++  }
++  Serial.println("\nListo. IP de la camara:");
++  Serial.println(WiFi.localIP());
++
++  server.on("/capture", handleCapture);
++  server.on("/led", handleLed);
++  server.on("/config", handleConfig);
++  server.on("/xclk", handleXclk);
++  server.begin();
++}
++
++void loop() {
++  server.handleClient();
++}
+\ No newline at end of file
+diff --git a/camera_module/firmware/CameraWebServer/board_config.h b/camera_module/firmware/CameraWebServer/board_config.h
+new file mode 100644
+index 0000000..2791886
+--- /dev/null
++++ b/camera_module/firmware/CameraWebServer/board_config.h
+@@ -0,0 +1,34 @@
++#ifndef BOARD_CONFIG_H
++#define BOARD_CONFIG_H
++
++//
++// WARNING!!! PSRAM IC required for UXGA resolution and high JPEG quality
++//            Ensure ESP32 Wrover Module or other board with PSRAM is selected
++//            Partial images will be transmitted if image exceeds buffer size
++//
++//            You must select partition scheme from the board menu that has at least 3MB APP space.
++
++// ===================
++// Select camera model
++// ===================
++//#define CAMERA_MODEL_WROVER_KIT // Has PSRAM
++//#define CAMERA_MODEL_ESP_EYE  // Has PSRAM
++//#define CAMERA_MODEL_ESP32S3_EYE // Has PSRAM
++//#define CAMERA_MODEL_M5STACK_PSRAM // Has PSRAM
++//#define CAMERA_MODEL_M5STACK_V2_PSRAM // M5Camera version B Has PSRAM
++//#define CAMERA_MODEL_M5STACK_WIDE // Has PSRAM
++//#define CAMERA_MODEL_M5STACK_ESP32CAM // No PSRAM
++//#define CAMERA_MODEL_M5STACK_UNITCAM // No PSRAM
++//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT  // Has PSRAM
++#define CAMERA_MODEL_AI_THINKER // Has PSRAM
++//#define CAMERA_MODEL_TTGO_T_JOURNAL // No PSRAM
++//#define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
++// ** Espressif Internal Boards **
++//#define CAMERA_MODEL_ESP32_CAM_BOARD
++//#define CAMERA_MODEL_ESP32S2_CAM_BOARD
++//#define CAMERA_MODEL_ESP32S3_CAM_LCD
++//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3 // Has PSRAM
++//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3 // Has PSRAM
++#include "camera_pins.h"
++
++#endif  // BOARD_CONFIG_H
+diff --git a/camera_module/firmware/CameraWebServer/camera_pins.h b/camera_module/firmware/CameraWebServer/camera_pins.h
+new file mode 100644
+index 0000000..3408508
+--- /dev/null
++++ b/camera_module/firmware/CameraWebServer/camera_pins.h
+@@ -0,0 +1,338 @@
++
++#if defined(CAMERA_MODEL_WROVER_KIT)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  21
++#define SIOD_GPIO_NUM  26
++#define SIOC_GPIO_NUM  27
++
++#define Y9_GPIO_NUM    35
++#define Y8_GPIO_NUM    34
++#define Y7_GPIO_NUM    39
++#define Y6_GPIO_NUM    36
++#define Y5_GPIO_NUM    19
++#define Y4_GPIO_NUM    18
++#define Y3_GPIO_NUM    5
++#define Y2_GPIO_NUM    4
++#define VSYNC_GPIO_NUM 25
++#define HREF_GPIO_NUM  23
++#define PCLK_GPIO_NUM  22
++
++#elif defined(CAMERA_MODEL_ESP_EYE)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  4
++#define SIOD_GPIO_NUM  18
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    36
++#define Y8_GPIO_NUM    37
++#define Y7_GPIO_NUM    38
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    35
++#define Y4_GPIO_NUM    14
++#define Y3_GPIO_NUM    13
++#define Y2_GPIO_NUM    34
++#define VSYNC_GPIO_NUM 5
++#define HREF_GPIO_NUM  27
++#define PCLK_GPIO_NUM  25
++
++#define LED_GPIO_NUM 22
++
++#elif defined(CAMERA_MODEL_M5STACK_PSRAM)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  25
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    32
++#define VSYNC_GPIO_NUM 22
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#elif defined(CAMERA_MODEL_M5STACK_V2_PSRAM)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  22
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    32
++#define VSYNC_GPIO_NUM 25
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#elif defined(CAMERA_MODEL_M5STACK_WIDE)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  22
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    32
++#define VSYNC_GPIO_NUM 25
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#define LED_GPIO_NUM 2
++
++#elif defined(CAMERA_MODEL_M5STACK_ESP32CAM)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  25
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    17
++#define VSYNC_GPIO_NUM 22
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#elif defined(CAMERA_MODEL_M5STACK_UNITCAM)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  25
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    32
++#define VSYNC_GPIO_NUM 22
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#elif defined(CAMERA_MODEL_M5STACK_CAMS3_UNIT)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM 21
++#define XCLK_GPIO_NUM  11
++#define SIOD_GPIO_NUM  17
++#define SIOC_GPIO_NUM  41
++
++#define Y9_GPIO_NUM    13
++#define Y8_GPIO_NUM    4
++#define Y7_GPIO_NUM    10
++#define Y6_GPIO_NUM    5
++#define Y5_GPIO_NUM    7
++#define Y4_GPIO_NUM    16
++#define Y3_GPIO_NUM    15
++#define Y2_GPIO_NUM    6
++#define VSYNC_GPIO_NUM 42
++#define HREF_GPIO_NUM  18
++#define PCLK_GPIO_NUM  12
++
++#define LED_GPIO_NUM 14
++
++#elif defined(CAMERA_MODEL_AI_THINKER)
++#define PWDN_GPIO_NUM  32
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  0
++#define SIOD_GPIO_NUM  26
++#define SIOC_GPIO_NUM  27
++
++#define Y9_GPIO_NUM    35
++#define Y8_GPIO_NUM    34
++#define Y7_GPIO_NUM    39
++#define Y6_GPIO_NUM    36
++#define Y5_GPIO_NUM    21
++#define Y4_GPIO_NUM    19
++#define Y3_GPIO_NUM    18
++#define Y2_GPIO_NUM    5
++#define VSYNC_GPIO_NUM 25
++#define HREF_GPIO_NUM  23
++#define PCLK_GPIO_NUM  22
++
++// 4 for flash led or 33 for normal led
++#define LED_GPIO_NUM   4
++
++#elif defined(CAMERA_MODEL_TTGO_T_JOURNAL)
++#define PWDN_GPIO_NUM  0
++#define RESET_GPIO_NUM 15
++#define XCLK_GPIO_NUM  27
++#define SIOD_GPIO_NUM  25
++#define SIOC_GPIO_NUM  23
++
++#define Y9_GPIO_NUM    19
++#define Y8_GPIO_NUM    36
++#define Y7_GPIO_NUM    18
++#define Y6_GPIO_NUM    39
++#define Y5_GPIO_NUM    5
++#define Y4_GPIO_NUM    34
++#define Y3_GPIO_NUM    35
++#define Y2_GPIO_NUM    17
++#define VSYNC_GPIO_NUM 22
++#define HREF_GPIO_NUM  26
++#define PCLK_GPIO_NUM  21
++
++#elif defined(CAMERA_MODEL_XIAO_ESP32S3)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  10
++#define SIOD_GPIO_NUM  40
++#define SIOC_GPIO_NUM  39
++
++#define Y9_GPIO_NUM    48
++#define Y8_GPIO_NUM    11
++#define Y7_GPIO_NUM    12
++#define Y6_GPIO_NUM    14
++#define Y5_GPIO_NUM    16
++#define Y4_GPIO_NUM    18
++#define Y3_GPIO_NUM    17
++#define Y2_GPIO_NUM    15
++#define VSYNC_GPIO_NUM 38
++#define HREF_GPIO_NUM  47
++#define PCLK_GPIO_NUM  13
++
++#elif defined(CAMERA_MODEL_ESP32_CAM_BOARD)
++// The 18 pin header on the board has Y5 and Y3 swapped
++#define USE_BOARD_HEADER 0
++#define PWDN_GPIO_NUM    32
++#define RESET_GPIO_NUM   33
++#define XCLK_GPIO_NUM    4
++#define SIOD_GPIO_NUM    18
++#define SIOC_GPIO_NUM    23
++
++#define Y9_GPIO_NUM 36
++#define Y8_GPIO_NUM 19
++#define Y7_GPIO_NUM 21
++#define Y6_GPIO_NUM 39
++#if USE_BOARD_HEADER
++#define Y5_GPIO_NUM 13
++#else
++#define Y5_GPIO_NUM 35
++#endif
++#define Y4_GPIO_NUM 14
++#if USE_BOARD_HEADER
++#define Y3_GPIO_NUM 35
++#else
++#define Y3_GPIO_NUM 13
++#endif
++#define Y2_GPIO_NUM    34
++#define VSYNC_GPIO_NUM 5
++#define HREF_GPIO_NUM  27
++#define PCLK_GPIO_NUM  25
++
++#elif defined(CAMERA_MODEL_ESP32S3_CAM_LCD)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  40
++#define SIOD_GPIO_NUM  17
++#define SIOC_GPIO_NUM  18
++
++#define Y9_GPIO_NUM    39
++#define Y8_GPIO_NUM    41
++#define Y7_GPIO_NUM    42
++#define Y6_GPIO_NUM    12
++#define Y5_GPIO_NUM    3
++#define Y4_GPIO_NUM    14
++#define Y3_GPIO_NUM    47
++#define Y2_GPIO_NUM    13
++#define VSYNC_GPIO_NUM 21
++#define HREF_GPIO_NUM  38
++#define PCLK_GPIO_NUM  11
++
++#elif defined(CAMERA_MODEL_ESP32S2_CAM_BOARD)
++// The 18 pin header on the board has Y5 and Y3 swapped
++#define USE_BOARD_HEADER 0
++#define PWDN_GPIO_NUM    1
++#define RESET_GPIO_NUM   2
++#define XCLK_GPIO_NUM    42
++#define SIOD_GPIO_NUM    41
++#define SIOC_GPIO_NUM    18
++
++#define Y9_GPIO_NUM 16
++#define Y8_GPIO_NUM 39
++#define Y7_GPIO_NUM 40
++#define Y6_GPIO_NUM 15
++#if USE_BOARD_HEADER
++#define Y5_GPIO_NUM 12
++#else
++#define Y5_GPIO_NUM 13
++#endif
++#define Y4_GPIO_NUM 5
++#if USE_BOARD_HEADER
++#define Y3_GPIO_NUM 13
++#else
++#define Y3_GPIO_NUM 12
++#endif
++#define Y2_GPIO_NUM    14
++#define VSYNC_GPIO_NUM 38
++#define HREF_GPIO_NUM  4
++#define PCLK_GPIO_NUM  3
++
++#elif defined(CAMERA_MODEL_ESP32S3_EYE)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  15
++#define SIOD_GPIO_NUM  4
++#define SIOC_GPIO_NUM  5
++
++#define Y2_GPIO_NUM 11
++#define Y3_GPIO_NUM 9
++#define Y4_GPIO_NUM 8
++#define Y5_GPIO_NUM 10
++#define Y6_GPIO_NUM 12
++#define Y7_GPIO_NUM 18
++#define Y8_GPIO_NUM 17
++#define Y9_GPIO_NUM 16
++
++#define VSYNC_GPIO_NUM 6
++#define HREF_GPIO_NUM  7
++#define PCLK_GPIO_NUM  13
++
++#elif defined(CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3) || defined(CAMERA_MODEL_DFRobot_Romeo_ESP32S3)
++#define PWDN_GPIO_NUM  -1
++#define RESET_GPIO_NUM -1
++#define XCLK_GPIO_NUM  45
++#define SIOD_GPIO_NUM  1
++#define SIOC_GPIO_NUM  2
++
++#define Y9_GPIO_NUM    48
++#define Y8_GPIO_NUM    46
++#define Y7_GPIO_NUM    8
++#define Y6_GPIO_NUM    7
++#define Y5_GPIO_NUM    4
++#define Y4_GPIO_NUM    41
++#define Y3_GPIO_NUM    40
++#define Y2_GPIO_NUM    39
++#define VSYNC_GPIO_NUM 6
++#define HREF_GPIO_NUM  42
++#define PCLK_GPIO_NUM  5
++
++#else
++#error "Camera model not selected"
++#endif
+diff --git a/camera_module/servidor/Procfile b/camera_module/servidor/Procfile
+new file mode 100644
+index 0000000..ac9d762
+--- /dev/null
++++ b/camera_module/servidor/Procfile
+@@ -0,0 +1 @@
++web: python server.py
+diff --git a/camera_module/servidor/requirements.txt b/camera_module/servidor/requirements.txt
+new file mode 100644
+index 0000000..a1175de
+--- /dev/null
++++ b/camera_module/servidor/requirements.txt
+@@ -0,0 +1,6 @@
++flask
++flask-cors
++requests
++pillow
++numpy
++opencv-python-headless
+diff --git a/camera_module/servidor/server.py b/camera_module/servidor/server.py
+new file mode 100644
+index 0000000..779a057
+--- /dev/null
++++ b/camera_module/servidor/server.py
+@@ -0,0 +1,292 @@
++import time
++import json
++import threading
++from io import BytesIO
++from flask import Flask, request, jsonify, Response
++from flask_cors import CORS
++import requests
++from PIL import Image
++import numpy as np
++import cv2
++
++import os
++
++# La IP de la ESP32-CAM se puede fijar aqui como valor por defecto, o pasarla
++# como variable de entorno ESP32_IP al desplegar (ej: en Railway > Variables).
++ESP32_IP = os.environ.get("ESP32_IP", "10.252.41.118")
++CAPTURE_URL = os.environ.get("ESP32_CAPTURE_URL", f"http://{ESP32_IP}/capture")
++camera_lock = threading.Lock()
++ARCHIVO_ZONAS = "zonas.json"
++
++sensibilidad_lock = threading.Lock()
++sensibilidad = {
++    "umbral_brillo": 20.0,
++    "umbral_bordes": 0.02,
++    "canny_bajo": 20,
++    "canny_alto": 80,
++}
++
++TIEMPO_CONFIRMACION_SEG = 1.5
++INTERVALO_LECTURA = 0.4
++
++app = Flask(__name__)
++CORS(app)
++
++estado_lock = threading.Lock()
++zonas = []
++clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
++
++def cargar_zonas():
++    global zonas
++    try:
++        with open(ARCHIVO_ZONAS, "r") as f:
++            zonas = json.load(f)
++    except FileNotFoundError:
++        zonas = []
++    for z in zonas:
++        z.setdefault("referencia", None)
++        z.setdefault("referencia_bordes", None)
++        z.setdefault("ocupada", False)
++        z.setdefault("cambio_desde", None)
++
++def guardar_zonas():
++    with open(ARCHIVO_ZONAS, "w") as f:
++        json.dump(zonas, f, indent=2)
++
++def limpiar_url_camara(valor):
++    valor = (valor or "").strip()
++    if not valor:
++        return ""
++    if not valor.startswith(("http://", "https://")):
++        valor = "http://" + valor
++    valor = valor.rstrip("/")
++    if not valor.endswith("/capture"):
++        valor += "/capture"
++    return valor
++
++def fijar_url_camara(valor):
++    global CAPTURE_URL, ESP32_IP
++    nueva = limpiar_url_camara(valor)
++    if not nueva:
++        return CAPTURE_URL
++    with camera_lock:
++        CAPTURE_URL = nueva
++        ESP32_IP = nueva.replace("http://", "").replace("https://", "").split("/")[0]
++        return CAPTURE_URL
++
++def obtener_foto_bytes():
++    with camera_lock:
++        url = CAPTURE_URL
++    r = requests.get(url, timeout=3)
++    r.raise_for_status()
++    return r.content
++
++def obtener_foto_gris():
++    img = Image.open(BytesIO(obtener_foto_bytes())).convert("L")
++    return np.array(img)
++
++def calcular_metricas(arr, puntos):
++    with sensibilidad_lock:
++        canny_bajo = sensibilidad["canny_bajo"]
++        canny_alto = sensibilidad["canny_alto"]
++
++    pts = np.array(puntos, dtype=np.int32)
++    x0, y0 = pts[:, 0].min(), pts[:, 1].min()
++    x1, y1 = pts[:, 0].max(), pts[:, 1].max()
++    x0, y0 = max(0, x0), max(0, y0)
++    x1, y1 = min(arr.shape[1], x1), min(arr.shape[0], y1)
++
++    if x1 <= x0 or y1 <= y0:
++        return 0, 0
++
++    mascara = np.zeros(arr.shape, dtype=np.uint8)
++    cv2.fillPoly(mascara, [pts], 255)
++
++    recorte = arr[y0:y1, x0:x1]
++    mascara_recorte = mascara[y0:y1, x0:x1]
++
++    pixeles_validos = recorte[mascara_recorte == 255]
++    if pixeles_validos.size == 0:
++        return 0, 0
++
++    brillo = float(pixeles_validos.mean())
++
++    recorte_mejorado = clahe.apply(recorte)
++    recorte_suave = cv2.GaussianBlur(recorte_mejorado, (3, 3), 0)
++    bordes = cv2.Canny(recorte_suave, canny_bajo, canny_alto)
++    bordes_validos = bordes[mascara_recorte == 255]
++    densidad_bordes = float((bordes_validos > 0).mean())
++
++    return brillo, densidad_bordes
++
++def loop_deteccion():
++    while True:
++        try:
++            arr = obtener_foto_gris()
++            ahora = time.time()
++            with sensibilidad_lock:
++                umbral_brillo = sensibilidad["umbral_brillo"]
++                umbral_bordes = sensibilidad["umbral_bordes"]
++            with estado_lock:
++                for z in zonas:
++                    if not z["puntos"]:
++                        continue
++
++                    brillo, bordes = calcular_metricas(arr, z["puntos"])
++
++                    if z["referencia"] is None:
++                        z["referencia"] = brillo
++                    if z["referencia_bordes"] is None:
++                        z["referencia_bordes"] = bordes
++
++                    dif_brillo = abs(brillo - z["referencia"])
++                    dif_bordes = abs(bordes - z["referencia_bordes"])
++
++                    ocupado_ahora = (dif_brillo > umbral_brillo) or (dif_bordes > umbral_bordes)
++
++                    if ocupado_ahora != z["ocupada"]:
++                        if z["cambio_desde"] is None:
++                            z["cambio_desde"] = ahora
++                        elif ahora - z["cambio_desde"] >= TIEMPO_CONFIRMACION_SEG:
++                            z["ocupada"] = ocupado_ahora
++                            z["cambio_desde"] = None
++                            print(f"[{z['nombre']}] -> {'OCUPADO' if ocupado_ahora else 'LIBRE'} "
++                                  f"(brillo={brillo:.1f} dif={dif_brillo:.1f}, bordes={bordes:.3f} dif={dif_bordes:.3f})")
++                    else:
++                        z["cambio_desde"] = None
++        except Exception as e:
++            print("Error en loop de deteccion:", e)
++        time.sleep(INTERVALO_LECTURA)
++
++@app.route("/api/camara", methods=["GET", "POST"])
++def api_camara():
++    if request.method == "POST":
++        datos = request.json or {}
++        valor = datos.get("capture_url") or datos.get("ip") or datos.get("url")
++        fijar_url_camara(valor)
++    with camera_lock:
++        return jsonify({"ok": True, "capture_url": CAPTURE_URL, "ip": ESP32_IP})
++
++@app.route("/api/captura", methods=["GET"])
++def api_captura():
++    try:
++        foto = obtener_foto_bytes()
++        return Response(foto, mimetype="image/jpeg")
++    except Exception as e:
++        return jsonify({"ok": False, "error": str(e)}), 503
++
++@app.route("/api/estado", methods=["GET"])
++def api_estado():
++    with estado_lock:
++        return jsonify([{"zona": z["nombre"], "ocupado": z["ocupada"]} for z in zonas])
++
++@app.route("/api/zonas", methods=["GET"])
++def api_get_zonas():
++    with estado_lock:
++        return jsonify(zonas)
++
++@app.route("/api/zonas", methods=["POST"])
++def api_set_zonas():
++    global zonas
++    nuevas = request.json
++    with estado_lock:
++        for nz in nuevas:
++            nz.setdefault("referencia", None)
++            nz.setdefault("referencia_bordes", None)
++            nz.setdefault("ocupada", False)
++            nz.setdefault("cambio_desde", None)
++        zonas = nuevas
++        guardar_zonas()
++    return jsonify({"ok": True})
++
++@app.route("/api/recalibrar", methods=["POST"])
++def api_recalibrar():
++    try:
++        arr = obtener_foto_gris()
++        with estado_lock:
++            for z in zonas:
++                if z["puntos"]:
++                    brillo, bordes = calcular_metricas(arr, z["puntos"])
++                    z["referencia"] = brillo
++                    z["referencia_bordes"] = bordes
++        return jsonify({"ok": True})
++    except Exception as e:
++        return jsonify({"ok": False, "error": str(e)}), 500
++
++@app.route("/api/sensibilidad", methods=["GET"])
++def api_get_sensibilidad():
++    with sensibilidad_lock:
++        return jsonify(sensibilidad)
++
++@app.route("/api/sensibilidad", methods=["POST"])
++def api_set_sensibilidad():
++    datos = request.json
++    with sensibilidad_lock:
++        for clave in ["umbral_brillo", "umbral_bordes", "canny_bajo", "canny_alto"]:
++            if clave in datos:
++                sensibilidad[clave] = float(datos[clave]) if clave in ("umbral_brillo", "umbral_bordes") else int(float(datos[clave]))
++    return jsonify({"ok": True, "sensibilidad": sensibilidad})
++
++@app.route("/debug/<nombre_zona>")
++def debug_zona(nombre_zona):
++    try:
++        arr = obtener_foto_gris()
++        with estado_lock:
++            zona = next((z for z in zonas if z["nombre"] == nombre_zona), None)
++        if zona is None:
++            return "Zona no encontrada", 404
++
++        with sensibilidad_lock:
++            canny_bajo = sensibilidad["canny_bajo"]
++            canny_alto = sensibilidad["canny_alto"]
++
++        pts = np.array(zona["puntos"], dtype=np.int32)
++        x0, y0 = max(0, int(pts[:, 0].min())), max(0, int(pts[:, 1].min()))
++        x1, y1 = min(arr.shape[1], int(pts[:, 0].max())), min(arr.shape[0], int(pts[:, 1].max()))
++
++        recorte = arr[y0:y1, x0:x1]
++        mascara = np.zeros(arr.shape, dtype=np.uint8)
++        cv2.fillPoly(mascara, [pts], 255)
++        mascara_recorte = mascara[y0:y1, x0:x1]
++
++        recorte_mejorado = clahe.apply(recorte)
++        recorte_suave = cv2.GaussianBlur(recorte_mejorado, (3, 3), 0)
++        bordes = cv2.Canny(recorte_suave, canny_bajo, canny_alto)
++
++        factor = 4
++        recorte_grande = cv2.resize(recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
++        mejorado_grande = cv2.resize(recorte_mejorado, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
++        bordes_grande = cv2.resize(bordes, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
++        mascara_grande = cv2.resize(mascara_recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
++
++        recorte_color = cv2.cvtColor(recorte_grande, cv2.COLOR_GRAY2BGR)
++        con_mascara = cv2.cvtColor(mejorado_grande, cv2.COLOR_GRAY2BGR)
++        con_mascara[mascara_grande == 0] = con_mascara[mascara_grande == 0] // 4
++
++        bordes_color = cv2.cvtColor(bordes_grande, cv2.COLOR_GRAY2BGR)
++        bordes_color[bordes_grande > 0] = [0, 255, 0]
++
++        def con_etiqueta(img, texto):
++            salida = img.copy()
++            cv2.putText(salida, texto, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1, cv2.LINE_AA)
++            return salida
++
++        recorte_color = con_etiqueta(recorte_color, "Original")
++        con_mascara = con_etiqueta(con_mascara, "Mascara + contraste")
++        bordes_color = con_etiqueta(bordes_color, "Bordes detectados")
++
++        ancho = recorte_color.shape[1]
++        separador = np.full((6, ancho, 3), 40, dtype=np.uint8)
++        composicion = np.vstack([recorte_color, separador, con_mascara, separador, bordes_color])
++
++        ok, buf = cv2.imencode(".png", composicion)
++        return Response(buf.tobytes(), mimetype="image/png")
++    except Exception as e:
++        return str(e), 500
++
++if __name__ == "__main__":
++    cargar_zonas()
++    hilo = threading.Thread(target=loop_deteccion, daemon=True)
++    hilo.start()
++    puerto = int(os.environ.get("PORT", 5000))
++    app.run(host="0.0.0.0", port=puerto, debug=False)
+\ No newline at end of file
+diff --git a/camera_module/servidor/zonas.example.json b/camera_module/servidor/zonas.example.json
+new file mode 100644
+index 0000000..2ee38e1
+--- /dev/null
++++ b/camera_module/servidor/zonas.example.json
+@@ -0,0 +1,27 @@
++[
++  {
++    "nombre": "1",
++    "puntos": [
++      [
++        139.8000030517578,
++        85.75
++      ],
++      [
++        114.80000305175781,
++        299.75
++      ],
++      [
++        443.8000030517578,
++        322.75
++      ],
++      [
++        464.8000030517578,
++        110.75
++      ]
++    ],
++    "ocupada": false,
++    "referencia": null,
++    "referencia_bordes": null,
++    "cambio_desde": null
++  }
++]
+\ No newline at end of file
+diff --git a/public/admin.html b/public/admin.html
+index aafce40..486bd7d 100644
+--- a/public/admin.html
++++ b/public/admin.html
+@@ -7,6 +7,7 @@
+ <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+ <link rel="stylesheet" href="/assets/css/admin.css">
++<link rel="stylesheet" href="/assets/css/camera-monitor.css">
+ </head>
+ <body>
+ <div id="app">
+@@ -248,247 +249,264 @@
+ 
+     <!-- ======== PAGE: MONITOR ======== -->
+     <div class="page" id="page-monitor">
+-      <div class="section-hd" style="margin-bottom:16px">       
+-          <div>
+-    <div class="section-title">
+-      Monitoreo en Tiempo Real
+-    </div>
++      <div class="section-hd" style="margin-bottom:16px">
++        <div>
++          <div class="section-title">Monitoreo en Tiempo Real</div>
++          <div class="section-sub">
++            Vista operativa ·
++            <span id="monitor-system-status" style="color:var(--text-muted)">Verificando sistema...</span>
++          </div>
++        </div>
+ 
+-    <div class="section-sub">
+-      Vista operativa ·
+-      <span
+-        id="monitor-system-status"
+-        style="color:var(--text-muted)"
+-      >
+-        Verificando sistema...
+-      </span>
+-    </div>
+-  </div>
+-     
+         <button
+           class="btn btn-secondary btn-sm"
+           id="monitor-capture-btn"
++          onclick="capturarCamaraMonitor()"
+           disabled
+-          title="La captura estará disponible cuando se conecte una cámara real"
++          title="La captura estará disponible cuando se conecte la cámara"
+         >
+           <i class="fa-solid fa-camera"></i>
+           Captura no disponible
+         </button>
+       </div>
+-      <div class="vehicle-panel">
+-        <!-- Camera feed -->
+-      <div class="camera-feed">
+-      <div class="camera-top">
+-        <span class="cam-rec" id="monitor-camera-rec">
+-          <span class="dot"></span>
+-          SIN SEÑAL
+-        </span>
+ 
+-        <div
+-          id="monitor-camera-name"
+-          style="font-size:13px;font-weight:600"
+-        >
+-          Cámara de entrada
+-        </div>
+-
+-        <div
+-          style="
+-            margin-left:auto;
+-            display:flex;
+-            gap:8px;
+-            align-items:center;
+-          "
+-        >
+-          <span
+-            class="badge badge-gray"
+-            id="monitor-camera-status"
+-          >
+-            Sin conexión
+-          </span>
++      <div class="monitor-note-card">
++        <i class="fa-solid fa-circle-info" style="color:var(--accent);margin-right:6px"></i>
++        El tiempo dentro del estacionamiento se calcula desde que la tarjeta RFID ingresa por la barrera de entrada hasta que sale por la barrera de salida. La cámara solo detecta qué espacio está ocupado durante ese periodo.
++      </div>
+ 
+-          <span
+-            id="monitor-camera-address"
+-            style="
+-              font-size:11px;
+-              color:var(--text-muted);
+-            "
+-          >
+-            Sin dirección
+-          </span>
++      <div class="camera-mode-card">
++        <div class="camera-mode-info">
++          <div class="camera-mode-icon"><i class="fa-solid fa-camera-retro"></i></div>
++          <div>
++            <div class="camera-mode-title">Modo de la cámara</div>
++            <div class="camera-mode-sub" id="cam-mode-switch-sub">Modo prueba — calibración de zonas habilitada</div>
++          </div>
++        </div>
++        <div class="camera-mode-toggle" id="cam-mode-switch-toggle">
++          <button type="button" id="cam-mode-btn-prueba" onclick="setCamMode('prueba')">
++            <i class="fa-solid fa-screwdriver-wrench"></i> Prueba
++          </button>
++          <button type="button" id="cam-mode-btn-funcionamiento" onclick="setCamMode('funcionamiento')">
++            <i class="fa-solid fa-play"></i> Funcionamiento
++          </button>
+         </div>
+       </div>
+ 
+-      <div
+-        class="camera-live"
+-        id="monitor-camera-view"
+-      >
+-        <div
+-          style="
+-            min-height:360px;
+-            width:100%;
+-            display:flex;
+-            flex-direction:column;
+-            align-items:center;
+-            justify-content:center;
+-            text-align:center;
+-            color:var(--text-muted);
+-            background:#05070c;
+-          "
+-        >
+-          <i
+-            class="fa-solid fa-video-slash"
+-            style="
+-              font-size:42px;
+-              margin-bottom:14px;
+-              opacity:0.55;
+-            "
+-          ></i>
++      <div class="camera-mode-banner prueba" id="cam-mode-banner">
++        <i class="fa-solid fa-circle-info"></i>
++        Modo prueba activo: calibra las zonas sobre la imagen de la cámara.
++      </div>
+ 
+-          <div
+-            style="
+-              font-size:14px;
+-              font-weight:600;
+-              color:var(--text-secondary);
+-            "
+-          >
+-            Transmisión no disponible
+-          </div>
++      <div class="vehicle-panel camera-monitor-layout">
++        <div class="camera-feed camera-feed-vision">
++          <div class="camera-top">
++            <span class="cam-rec" id="monitor-camera-rec">
++              <span class="dot"></span>
++              SIN SEÑAL
++            </span>
+ 
+-          <div
+-            style="
+-              font-size:11px;
+-              margin-top:5px;
+-            "
+-          >
+-            Esperando conexión con la ESP32-CAM
++            <div id="monitor-camera-name" style="font-size:13px;font-weight:600">
++              ESP32-CAM de monitoreo
++            </div>
++
++            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
++              <span class="cam-conn-badge offline" id="cam-conn-badge">
++                <span class="dot"></span>Sin conectar
++              </span>
++              <span class="badge badge-gray" id="monitor-camera-status">Sin conexión</span>
++              <span id="monitor-camera-address" style="font-size:11px;color:var(--text-muted)">Sin dirección</span>
++              <button class="btn-cam-icon" id="btn-cam-settings" onclick="abrirModalCamSettings()" title="Ajustes de cámara">
++                <i class="fa-solid fa-gear"></i>
++              </button>
++            </div>
+           </div>
+-        </div>
+-      </div>
+ 
+-      <div
+-        style="
+-          padding:12px 16px;
+-          border-top:1px solid var(--border);
+-          display:flex;
+-          gap:10px;
+-          flex-wrap:wrap;
+-        "
+-      >
+-        <div style="flex:1;min-width:120px">
+-          <div
+-            style="
+-              font-size:10px;
+-              color:var(--text-muted);
+-              font-weight:600;
+-              text-transform:uppercase;
+-              letter-spacing:0.05em;
+-              margin-bottom:2px;
+-            "
+-          >
+-            Vehículos activos
++          <div class="cam-toolbar">
++            <button class="btn-cam" id="btn-cam-nueva-zona" onclick="toggleModoNuevaZona()">
++              <i class="fa-solid fa-vector-square"></i> Nueva zona
++            </button>
++            <button class="btn-cam" id="btn-cam-recalibrar" onclick="recalibrarZonas()">
++              <i class="fa-solid fa-crosshairs"></i> Recalibrar vacío
++            </button>
++            <button class="btn-cam" id="btn-cam-guardar" onclick="guardarZonasCam()">
++              <i class="fa-solid fa-floppy-disk"></i> Guardar zonas
++            </button>
++            <button class="btn-cam danger" id="btn-cam-borrar" onclick="camBorrarTodasLasZonas()">
++              <i class="fa-solid fa-trash"></i> Borrar zonas
++            </button>
++            <span class="cam-toolbar-hint" id="cam-toolbar-hint">Conecta la cámara para empezar</span>
+           </div>
+ 
+-          <div
+-            id="monitor-detected-count"
+-            style="
+-              font-size:16px;
+-              font-weight:700;
+-              color:var(--accent);
+-            "
+-          >
+-            0 activos
++          <div class="camera-live camera-live-vision" id="monitor-camera-view">
++            <img id="cam-live-img" class="cam-live-img" alt="Vista ESP32-CAM">
++            <canvas id="cam-overlay-canvas" class="cam-overlay-canvas"></canvas>
++            <div class="cam-empty-state" id="cam-empty-state">
++              <i class="fa-solid fa-video-slash"></i>
++              <strong>Transmisión no disponible</strong>
++              <span>Conecta el servidor de cámara desde el engranaje.</span>
++            </div>
++            <div class="cam-status-bar">
++              <span><span class="live-dot"></span>LIVE</span>
++              <span id="cam-detectados">Detectados: 0 / 10</span>
++              <span id="cam-ts">Esperando lectura</span>
++            </div>
+           </div>
+-        </div>
+ 
+-        <div style="flex:1;min-width:120px">
+-          <div
+-            style="
+-              font-size:10px;
+-              color:var(--text-muted);
+-              font-weight:600;
+-              text-transform:uppercase;
+-              letter-spacing:0.05em;
+-              margin-bottom:2px;
+-            "
+-          >
+-            Latencia
++          <div class="cam-metrics-row">
++            <div>
++              <div class="cam-metric-label">Vehículos activos</div>
++              <div class="cam-metric-value accent" id="monitor-detected-count">0 activos</div>
++            </div>
++            <div>
++              <div class="cam-metric-label">Espacios ocupados</div>
++              <div class="cam-metric-value red" id="cam-stat-ocupados">0</div>
++            </div>
++            <div>
++              <div class="cam-metric-label">Espacios libres</div>
++              <div class="cam-metric-value green" id="cam-stat-libres">10</div>
++            </div>
++            <div>
++              <div class="cam-metric-label">Latencia</div>
++              <div class="cam-metric-value" id="monitor-camera-latency">Sin dato</div>
++            </div>
++            <div>
++              <div class="cam-metric-label">Última lectura</div>
++              <div class="cam-metric-value" id="monitor-camera-last">Sin registro</div>
++            </div>
++            <div style="display:none">
++              <div class="cam-metric-label">Estado del dispositivo</div>
++              <div class="cam-metric-value" id="monitor-camera-device-state">Sin conexión</div>
++            </div>
+           </div>
+ 
+-          <div
+-            id="monitor-camera-latency"
+-            style="
+-              font-size:16px;
+-              font-weight:700;
+-            "
+-          >
+-            —
++          <div class="cam-sens-bar">
++            <div class="cam-sens-item" title="Umbral de brillo">
++              <label>Brillo</label>
++              <input type="range" min="5" max="60" value="20" id="cfg-sens-brillo" oninput="camSetSensibilidad('umbral_brillo',this.value)">
++              <span id="cfg-sens-brillo-val">20</span>
++            </div>
++            <div class="cam-sens-item" title="Umbral de bordes">
++              <label>Bordes</label>
++              <input type="range" min="0.005" max="0.1" step="0.005" value="0.02" id="cfg-sens-bordes" oninput="camSetSensibilidad('umbral_bordes',this.value)">
++              <span id="cfg-sens-bordes-val">0.02</span>
++            </div>
++            <div class="cam-sens-item" title="Canny — umbral bajo">
++              <label>Canny↓</label>
++              <input type="range" min="5" max="100" value="20" id="cfg-sens-canny-bajo" oninput="camSetSensibilidad('canny_bajo',this.value)">
++              <span id="cfg-sens-canny-bajo-val">20</span>
++            </div>
++            <div class="cam-sens-item" title="Canny — umbral alto">
++              <label>Canny↑</label>
++              <input type="range" min="20" max="200" value="80" id="cfg-sens-canny-alto" oninput="camSetSensibilidad('canny_alto',this.value)">
++              <span id="cfg-sens-canny-alto-val">80</span>
++            </div>
+           </div>
+         </div>
+ 
+-        <div style="flex:1;min-width:120px">
+-          <div
+-            style="
+-              font-size:10px;
+-              color:var(--text-muted);
+-              font-weight:600;
+-              text-transform:uppercase;
+-              letter-spacing:0.05em;
+-              margin-bottom:2px;
+-            "
+-          >
+-            Última lectura
++        <div class="vehicles-list camera-side">
++          <div class="v-list-hd">
++            <div style="font-size:13px;font-weight:600">Vehículos en Estacionamiento</div>
++            <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="v-feed-count">0 activos · actualizado ahora</div>
+           </div>
+ 
+-          <div
+-            id="monitor-camera-last"
+-            style="
+-              font-size:16px;
+-              font-weight:700;
+-            "
+-          >
+-            Sin registro
++          <div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:10px 12px">
++            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:4px">Espacios · Vista por cámara</div>
++            <div id="cam-spaces-sub" style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">0 ocupados · 10 libres</div>
++            <div id="monitor-parking-strip" style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px"></div>
+           </div>
++
++          <div class="cam-debug-panel">
++            <div class="cam-debug-label">
++              <i class="fa-solid fa-magnifying-glass-chart"></i>
++              Depurar zona
++              <span class="cam-debug-zona-tag" id="cam-debug-zona-tag" style="display:none"></span>
++            </div>
++            <div class="cam-debug-imgwrap" id="cam-debug-imgwrap">
++              <div class="cam-debug-empty">Selecciona un espacio para ver la detección en detalle.</div>
++            </div>
++          </div>
++
++          <div class="v-list-body" id="vehicles-feed" style="border-top:none"></div>
+         </div>
++      </div>
++    </div>
+ 
+-        <div style="flex:1;min-width:120px">
+-          <div
+-            style="
+-              font-size:10px;
+-              color:var(--text-muted);
+-              font-weight:600;
+-              text-transform:uppercase;
+-              letter-spacing:0.05em;
+-              margin-bottom:2px;
+-            "
+-          >
+-            Estado del dispositivo
++    <!-- MODAL: AJUSTES DE CÁMARA -->
++    <div class="modal-overlay" id="modal-cam-settings">
++      <div class="modal">
++        <div class="modal-hd">
++          <span class="modal-title"><i class="fa-solid fa-gear" style="color:var(--accent);margin-right:6px"></i>Ajustes de cámara</span>
++          <div class="modal-close" onclick="cerrarModalCamSettings()"><i class="fa-solid fa-xmark"></i></div>
++        </div>
++        <div class="modal-body">
++          <div class="modal-section-label">Conexión</div>
++          <div class="modal-field-row">
++            <div class="modal-field">
++              <label>URL/IP cámara ESP32-CAM</label>
++              <input type="text" id="cfg-ip-camara" placeholder="Ej: 192.168.1.50 o http://192.168.1.50">
++            </div>
++            <div class="modal-field">
++              <label>URL servidor de visión</label>
++              <input type="text" id="cfg-ip-servidor" placeholder="Ej: https://tu-camara.up.railway.app">
++            </div>
+           </div>
++          <button class="btn-cam full" onclick="conectarCamara()">
++            <i class="fa-solid fa-plug-circle-check"></i> Conectar cámara
++          </button>
+ 
+-          <div
+-            id="monitor-camera-device-state"
+-            style="
+-              font-size:16px;
+-              font-weight:700;
+-            "
+-          >
+-            Sin conexión
++          <div class="modal-section-label" style="margin-top:18px">Controles rápidos de ESP32-CAM</div>
++          <div class="modal-slider-row">
++            <label>LED flash</label>
++            <input type="range" min="0" max="255" value="0" id="cfg-led" oninput="camSetLed(this.value)">
++            <span id="cfg-led-val">0</span>
++          </div>
++          <div class="modal-slider-row">
++            <label>Calidad JPEG</label>
++            <input type="range" min="4" max="63" value="12" id="cfg-quality" oninput="camSetConfig('quality',this.value)">
++            <span id="cfg-quality-val">12</span>
++          </div>
++          <div class="modal-slider-row">
++            <label>Brillo</label>
++            <input type="range" min="-2" max="2" value="0" id="cfg-brightness" oninput="camSetConfig('brightness',this.value)">
++            <span id="cfg-brightness-val">0</span>
++          </div>
++          <div class="modal-slider-row">
++            <label>Contraste</label>
++            <input type="range" min="-2" max="2" value="0" id="cfg-contrast" oninput="camSetConfig('contrast',this.value)">
++            <span id="cfg-contrast-val">0</span>
++          </div>
++          <div class="modal-slider-row">
++            <label>Saturación</label>
++            <input type="range" min="-2" max="2" value="0" id="cfg-saturation" oninput="camSetConfig('saturation',this.value)">
++            <span id="cfg-saturation-val">0</span>
++          </div>
++          <div class="modal-slider-row">
++            <label>XCLK MHz</label>
++            <input type="range" min="6" max="20" value="20" id="cfg-xclk" oninput="camSetXclk(this.value)">
++            <span id="cfg-xclk-val">20</span>
+           </div>
+         </div>
+       </div>
+-
+     </div>
+ 
+-        <!-- Vehicles list -->
+-        <div class="vehicles-list">
+-          <div class="v-list-hd">
+-            <div style="font-size:13px;font-weight:600">Vehículos en Estacionamiento</div>
+-            <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="v-feed-count">0 activos · actualizado ahora</div>
++    <!-- MODAL: ASIGNAR / EDITAR ZONA -->
++    <div class="modal-overlay" id="modal-zona">
++      <div class="modal" style="max-width:420px">
++        <div class="modal-hd">
++          <span class="modal-title"><i class="fa-solid fa-square-parking" style="color:var(--accent);margin-right:6px"></i>Espacio de estacionamiento</span>
++          <div class="modal-close" onclick="cerrarModalZona()"><i class="fa-solid fa-xmark"></i></div>
++        </div>
++        <div class="modal-body">
++          <div class="modal-field" id="zona-estado-actual" style="font-size:12px;color:var(--text-secondary);margin-bottom:14px"></div>
++          <div class="modal-field">
++            <label>Número de espacio asignado</label>
++            <input type="text" id="zona-numero-input" placeholder="Ej: 1, 2, 3...">
+           </div>
+-          <div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:10px 12px">
+-            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px">Espacios · Vista rápida</div>
+-            <div id="monitor-parking-strip" style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px"></div>
++          <div class="modal-btn-row">
++            <button class="btn-cam danger" onclick="eliminarZonaActual()"><i class="fa-solid fa-trash"></i> Eliminar zona</button>
++            <button class="btn-cam primario" onclick="guardarNumeroZona()"><i class="fa-solid fa-check"></i> Guardar</button>
+           </div>
+-          <div class="v-list-body" id="vehicles-feed" style="border-top:none"></div>
+         </div>
+       </div>
+     </div>
+@@ -1849,6 +1867,7 @@
+ <div id="toast-container"></div>
+ 
+ <script src="/assets/js/admin.js"></script>
++<script src="/assets/js/camera-monitor.js"></script>
+ </div><!-- /app -->
+ </body>
+ </html>
+diff --git a/public/assets/css/camera-monitor.css b/public/assets/css/camera-monitor.css
+new file mode 100644
+index 0000000..f0474f6
+--- /dev/null
++++ b/public/assets/css/camera-monitor.css
+@@ -0,0 +1,497 @@
++/* ============================================================
++   Monitor ESP32-CAM / detección de espacios
++   ============================================================ */
++.camera-monitor-layout {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) 310px;
++  gap: 16px;
++  height: calc(100vh - var(--header-h) - 138px);
++  min-height: 640px;
++}
++
++.camera-mode-card,
++.monitor-note-card {
++  background: var(--bg-card);
++  border: 1px solid var(--border);
++  border-radius: var(--radius-md);
++  padding: 12px 14px;
++  margin-bottom: 12px;
++}
++
++.camera-mode-card {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++}
++
++.camera-mode-info {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++}
++
++.camera-mode-icon {
++  width: 38px;
++  height: 38px;
++  border-radius: 10px;
++  display: grid;
++  place-items: center;
++  background: var(--purple-bg);
++  color: var(--purple);
++  font-size: 16px;
++}
++
++.camera-mode-title {
++  font-weight: 700;
++  font-size: 13px;
++}
++
++.camera-mode-sub,
++.monitor-note-card {
++  font-size: 11px;
++  color: var(--text-secondary);
++  line-height: 1.5;
++}
++
++.camera-mode-toggle {
++  display: flex;
++  gap: 6px;
++  background: var(--bg-tertiary);
++  border: 1px solid var(--border);
++  border-radius: 999px;
++  padding: 4px;
++}
++
++.camera-mode-toggle button {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  border-radius: 999px;
++  padding: 8px 12px;
++  color: var(--text-secondary);
++  font-size: 11px;
++  font-weight: 700;
++  transition: background var(--transition), color var(--transition);
++}
++
++.camera-mode-toggle button.active {
++  background: var(--accent);
++  color: #fff;
++}
++
++.camera-mode-banner {
++  margin-bottom: 12px;
++  border: 1px solid var(--border);
++  border-radius: var(--radius-md);
++  padding: 10px 12px;
++  font-size: 12px;
++  display: flex;
++  align-items: center;
++  gap: 8px;
++}
++
++.camera-mode-banner.prueba {
++  color: var(--amber);
++  background: var(--amber-bg);
++  border-color: rgba(245, 158, 11, 0.35);
++}
++
++.camera-mode-banner.funcionamiento {
++  color: var(--green);
++  background: var(--green-bg);
++  border-color: rgba(34, 197, 94, 0.35);
++}
++
++.camera-feed-vision {
++  min-width: 0;
++}
++
++.cam-conn-badge {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  font-size: 11px;
++  font-weight: 700;
++  border-radius: 999px;
++  border: 1px solid var(--border);
++  padding: 4px 8px;
++  color: var(--text-secondary);
++}
++
++.cam-conn-badge .dot {
++  width: 7px;
++  height: 7px;
++  border-radius: 50%;
++  background: currentColor;
++}
++
++.cam-conn-badge.online { color: var(--green); background: var(--green-bg); border-color: rgba(34, 197, 94, .35); }
++.cam-conn-badge.offline { color: var(--red); background: var(--red-bg); border-color: rgba(239, 68, 68, .35); }
++.cam-conn-badge.connecting { color: var(--amber); background: var(--amber-bg); border-color: rgba(245, 158, 11, .35); }
++
++.cam-rec.online .dot { background: var(--green); }
++
++.cam-toolbar {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 8px;
++  padding: 10px 14px;
++  border-bottom: 1px solid var(--border);
++  background: color-mix(in srgb, var(--bg-card) 86%, var(--bg-tertiary));
++}
++
++.btn-cam {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  gap: 6px;
++  padding: 7px 10px;
++  border-radius: var(--radius-sm);
++  border: 1px solid var(--border);
++  background: var(--bg-tertiary);
++  color: var(--text-secondary);
++  font-size: 11px;
++  font-weight: 700;
++  transition: all var(--transition);
++}
++
++.btn-cam:hover,
++.btn-cam.active {
++  color: var(--accent);
++  border-color: var(--accent);
++  background: var(--accent-glow);
++}
++
++.btn-cam.danger:hover {
++  color: var(--red);
++  border-color: var(--red);
++  background: var(--red-bg);
++}
++
++.btn-cam.primario,
++.btn-cam.full {
++  background: var(--accent);
++  color: #fff;
++  border-color: var(--accent);
++}
++
++.btn-cam.full {
++  width: 100%;
++  margin-top: 10px;
++  padding: 10px 12px;
++}
++
++.btn-cam-icon {
++  width: 30px;
++  height: 30px;
++  border-radius: var(--radius-sm);
++  display: grid;
++  place-items: center;
++  border: 1px solid var(--border);
++  color: var(--text-secondary);
++  background: var(--bg-tertiary);
++}
++
++.btn-cam-icon:hover {
++  color: var(--accent);
++  border-color: var(--accent);
++}
++
++.cam-toolbar-hint {
++  margin-left: auto;
++  font-size: 11px;
++  color: var(--text-muted);
++}
++
++.camera-live-vision {
++  min-height: 420px;
++  overflow: hidden;
++  background: #05070c;
++}
++
++.cam-live-img {
++  max-width: 100%;
++  max-height: 100%;
++  display: block;
++  object-fit: contain;
++}
++
++.cam-overlay-canvas {
++  position: absolute;
++  cursor: crosshair;
++  z-index: 3;
++}
++
++.cam-empty-state {
++  position: absolute;
++  inset: 0;
++  z-index: 2;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  flex-direction: column;
++  gap: 8px;
++  text-align: center;
++  color: var(--text-muted);
++  background: #05070c;
++}
++
++.cam-empty-state i {
++  font-size: 40px;
++  opacity: .55;
++}
++
++.cam-empty-state strong {
++  color: var(--text-secondary);
++  font-size: 14px;
++}
++
++.cam-status-bar {
++  position: absolute;
++  left: 0;
++  right: 0;
++  bottom: 0;
++  z-index: 4;
++  display: flex;
++  justify-content: space-between;
++  gap: 10px;
++  padding: 6px 10px;
++  background: rgba(0, 0, 0, .68);
++  color: rgba(255, 255, 255, .72);
++  font-size: 10px;
++  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
++}
++
++.cam-metrics-row {
++  padding: 12px 16px;
++  border-top: 1px solid var(--border);
++  display: grid;
++  grid-template-columns: repeat(5, minmax(110px, 1fr));
++  gap: 10px;
++}
++
++.cam-metric-label {
++  font-size: 10px;
++  color: var(--text-muted);
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: .05em;
++  margin-bottom: 3px;
++}
++
++.cam-metric-value {
++  font-size: 16px;
++  font-weight: 800;
++}
++
++.cam-metric-value.accent { color: var(--accent); }
++.cam-metric-value.green { color: var(--green); }
++.cam-metric-value.red { color: var(--red); }
++
++.cam-sens-bar {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++  gap: 10px;
++  padding: 12px 14px;
++  border-top: 1px solid var(--border);
++  background: var(--bg-tertiary);
++}
++
++.cam-sens-item {
++  display: flex;
++  align-items: center;
++  gap: 7px;
++  min-width: 0;
++  font-size: 10.5px;
++}
++
++.cam-sens-item label {
++  color: var(--text-secondary);
++  white-space: nowrap;
++  font-weight: 700;
++}
++
++.cam-sens-item input[type="range"] {
++  min-width: 0;
++  flex: 1;
++  accent-color: var(--accent);
++}
++
++.cam-sens-item span {
++  width: 32px;
++  text-align: right;
++  color: var(--accent);
++  font-variant-numeric: tabular-nums;
++}
++
++.camera-side {
++  width: 310px;
++}
++
++.cam-space-mini {
++  position: relative;
++  height: 34px !important;
++  font-size: 11px !important;
++}
++
++.cam-space-mini i {
++  position: absolute;
++  right: 5px;
++  top: 4px;
++  font-size: 9px;
++  opacity: .7;
++}
++
++.cam-space-mini.not-calibrated i {
++  color: var(--amber);
++}
++
++.cam-space-mini.selected {
++  box-shadow: 0 0 0 2px var(--accent);
++}
++
++.cam-debug-panel {
++  background: var(--bg-card);
++  border-left: 1px solid var(--border);
++  border-right: 1px solid var(--border);
++  padding: 10px 12px;
++}
++
++.cam-debug-label {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  font-size: 10px;
++  font-weight: 800;
++  letter-spacing: .05em;
++  text-transform: uppercase;
++  color: var(--text-muted);
++  margin-bottom: 8px;
++}
++
++.cam-debug-zona-tag {
++  padding: 2px 7px;
++  border-radius: 999px;
++  background: var(--accent-glow);
++  color: var(--accent);
++  font-size: 10px;
++}
++
++.cam-debug-imgwrap {
++  min-height: 120px;
++  border: 1px solid var(--border);
++  border-radius: var(--radius-sm);
++  background: #000;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  overflow: hidden;
++}
++
++.cam-debug-imgwrap img {
++  width: 100%;
++  height: auto;
++  display: block;
++  image-rendering: pixelated;
++}
++
++.cam-debug-empty {
++  padding: 16px 12px;
++  text-align: center;
++  font-size: 11px;
++  color: var(--text-muted);
++  line-height: 1.45;
++}
++
++.modal-field-row {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 12px;
++}
++
++.modal-field {
++  margin-bottom: 12px;
++}
++
++.modal-field label,
++.modal-slider-row label,
++.modal-section-label {
++  display: block;
++  font-size: 10px;
++  color: var(--text-muted);
++  text-transform: uppercase;
++  letter-spacing: .05em;
++  font-weight: 800;
++  margin-bottom: 6px;
++}
++
++.modal-field input {
++  width: 100%;
++  padding: 9px 10px;
++}
++
++.modal-slider-row {
++  display: grid;
++  grid-template-columns: 110px 1fr 38px;
++  align-items: center;
++  gap: 8px;
++  margin-bottom: 10px;
++}
++
++.modal-slider-row input[type="range"] {
++  accent-color: var(--accent);
++}
++
++.modal-slider-row span {
++  color: var(--accent);
++  font-variant-numeric: tabular-nums;
++  text-align: right;
++}
++
++.modal-section-label {
++  margin-top: 6px;
++  color: var(--accent);
++}
++
++.modal-btn-row {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 14px;
++}
++
++body.cam-locked .cam-toolbar .btn-cam:not(#btn-cam-settings),
++body.cam-locked #btn-cam-nueva-zona,
++body.cam-locked #btn-cam-guardar,
++body.cam-locked #btn-cam-recalibrar,
++body.cam-locked #btn-cam-borrar,
++body.cam-locked .cam-sens-bar input {
++  opacity: .55;
++  pointer-events: none;
++}
++
++[data-theme="light"] .camera-live-vision,
++[data-theme="light"] .cam-empty-state,
++[data-theme="light"] .cam-debug-imgwrap {
++  background: #f8fafc;
++}
++
++[data-theme="light"] .cam-status-bar {
++  background: rgba(15, 23, 42, .82);
++}
++
++@media (max-width: 1200px) {
++  .camera-monitor-layout { grid-template-columns: 1fr; height: auto; }
++  .camera-side { width: 100%; }
++  .cam-metrics-row { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
++}
++
++@media (max-width: 720px) {
++  .camera-mode-card,
++  .modal-field-row { grid-template-columns: 1fr; display: grid; }
++  .camera-mode-toggle { width: 100%; justify-content: space-between; }
++  .cam-sens-bar { grid-template-columns: 1fr; }
++  .modal-slider-row { grid-template-columns: 1fr; }
++}
+diff --git a/public/assets/js/admin.js b/public/assets/js/admin.js
+index 92ec055..c68f893 100644
+--- a/public/assets/js/admin.js
++++ b/public/assets/js/admin.js
+@@ -3557,6 +3557,9 @@ function formatearFechaIoT(fecha) {
+ }
+ 
+ function actualizarMonitorCamaraReal() {
++  if (window.smartparkCamera && window.smartparkCamera.connected) {
++    return;
++  }
+   const camara = IOT_DEVICES.find(
+     (dispositivo) =>
+       dispositivo.tipo === "ESP32-CAM"
+diff --git a/public/assets/js/camera-monitor.js b/public/assets/js/camera-monitor.js
+new file mode 100644
+index 0000000..cfb0f12
+--- /dev/null
++++ b/public/assets/js/camera-monitor.js
+@@ -0,0 +1,701 @@
++// ============================================================
++// MONITOREO POR ESP32-CAM + DETECCION DE ESPACIOS
++// Este módulo es independiente del cobro RFID.
++// El tiempo de estacionamiento sigue calculándose desde ENTRADA RFID
++// hasta SALIDA RFID. La cámara solo indica qué espacio está ocupado.
++// ============================================================
++(function () {
++  const TOTAL_ESPACIOS = 10;
++
++  const cam = window.smartparkCamera = {
++    mode: localStorage.getItem('smartpark_camera_mode') || 'prueba',
++    serverUrl: localStorage.getItem('smartpark_camera_server') || '',
++    cameraUrl: localStorage.getItem('smartpark_camera_url') || '',
++    connected: false,
++    zonas: [],
++    ocupacion: {},
++    puntosActuales: [],
++    modoNuevaZona: false,
++    numeroPendiente: null,
++    zonaEditando: null,
++    zonaDebugActual: null,
++    intervalFrame: null,
++    intervalEstado: null,
++    intervalDebug: null,
++    lastFrameStart: 0,
++    ultimaLectura: null,
++    ultimaLatencia: 0
++  };
++
++  function el(id) {
++    return document.getElementById(id);
++  }
++
++  function toast(tipo, mensaje, icono) {
++    if (typeof showToast === 'function') {
++      showToast(tipo, mensaje, icono || 'fa-circle-info');
++    } else {
++      console.log(`[${tipo}] ${mensaje}`);
++    }
++  }
++
++  function normalizarUrl(valor, usarHttp = true) {
++    let url = String(valor || '').trim();
++    if (!url) return '';
++    url = url.replace(/\/$/, '');
++    if (!/^https?:\/\//i.test(url) && usarHttp) {
++      url = 'http://' + url;
++    }
++    return url;
++  }
++
++  function setTexto(id, valor) {
++    const nodo = el(id);
++    if (nodo) nodo.textContent = valor;
++  }
++
++  function setEstadoCamara(estado, texto) {
++    const badge = el('cam-conn-badge');
++    if (badge) {
++      badge.className = `cam-conn-badge ${estado}`;
++      badge.innerHTML = `<span class="dot"></span>${texto}`;
++    }
++
++    const estadoCam = el('monitor-camera-status');
++    if (estadoCam) {
++      estadoCam.textContent = texto;
++      estadoCam.className = estado === 'online' ? 'badge badge-green' : estado === 'connecting' ? 'badge badge-amber' : 'badge badge-red';
++    }
++
++    const rec = el('monitor-camera-rec');
++    if (rec) {
++      rec.innerHTML = `<span class="dot"></span>${estado === 'online' ? 'CONECTADA' : 'SIN SEÑAL'}`;
++      rec.classList.toggle('online', estado === 'online');
++    }
++
++    const btn = el('monitor-capture-btn');
++    if (btn) {
++      btn.disabled = estado !== 'online';
++      btn.innerHTML = estado === 'online'
++        ? '<i class="fa-solid fa-camera"></i> Capturar vista'
++        : '<i class="fa-solid fa-camera"></i> Captura no disponible';
++      btn.title = estado === 'online' ? 'Abrir captura actual de la ESP32-CAM' : 'Disponible cuando la cámara esté conectada';
++    }
++
++    setTexto('monitor-camera-device-state', estado === 'online' ? 'Operativo' : texto);
++    const sistema = el('monitor-system-status');
++    if (sistema) {
++      sistema.textContent = estado === 'online' ? 'Sistema conectado' : texto;
++      sistema.style.color = estado === 'online' ? 'var(--green)' : estado === 'connecting' ? 'var(--amber)' : 'var(--red)';
++    }
++  }
++
++  function actualizarResumenCamara() {
++    const ocupados = Object.values(cam.ocupacion).filter(Boolean).length;
++    const libres = TOTAL_ESPACIOS - ocupados;
++
++    setTexto('cam-detectados', `Detectados: ${ocupados} / ${TOTAL_ESPACIOS}`);
++    setTexto('cam-stat-ocupados', ocupados);
++    setTexto('cam-stat-libres', libres);
++    setTexto('cam-spaces-sub', `${ocupados} ocupados · ${libres} libres`);
++    setTexto('monitor-camera-latency', cam.ultimaLatencia ? `${cam.ultimaLatencia} ms` : 'Sin dato');
++    setTexto('monitor-camera-last', cam.ultimaLectura ? cam.ultimaLectura.toLocaleTimeString('es-PE') : 'Sin registro');
++
++    const activos = typeof vehiclesData !== 'undefined'
++      ? vehiclesData.filter((vehiculo) => vehiculo.inside).length
++      : 0;
++    setTexto('monitor-detected-count', `${activos} activo${activos === 1 ? '' : 's'}`);
++  }
++
++  // La tira lateral de espacios usa la cámara si ya existe estado visual.
++  window.renderMonitorParkingStrip = function renderMonitorParkingStripCamara() {
++    const strip = el('monitor-parking-strip');
++    if (!strip) return;
++
++    let html = '';
++    for (let i = 1; i <= TOTAL_ESPACIOS; i++) {
++      const tieneDatoCamara = Object.prototype.hasOwnProperty.call(cam.ocupacion, String(i));
++      let cls = 'spot-free';
++      let label = 'Libre';
++
++      if (tieneDatoCamara) {
++        cls = cam.ocupacion[String(i)] ? 'spot-occupied' : 'spot-free';
++        label = cam.ocupacion[String(i)] ? 'Ocupado por cámara' : 'Libre por cámara';
++      } else if (typeof SPOT_STATE !== 'undefined') {
++        cls = SPOT_STATE[i] || 'spot-free';
++        label = cls === 'spot-occupied' ? 'Ocupado' : cls === 'spot-reserved' ? 'Reservado' : cls === 'spot-maintenance' ? 'Mantenimiento' : 'Libre';
++      }
++
++      const calibrada = cam.zonas.some((z) => String(z.nombre) === String(i));
++      html += `
++        <button
++          type="button"
++          class="parking-spot ${cls} cam-space-mini ${calibrada ? 'calibrated' : 'not-calibrated'}"
++          title="Espacio ${i} · ${label}${calibrada ? ' · zona calibrada' : ' · sin zona calibrada'}"
++          onclick="camSeleccionarZonaDebug('${i}')"
++        >
++          <span>${i}</span>
++          <i class="fa-solid ${calibrada ? 'fa-eye' : 'fa-pen'}"></i>
++        </button>`;
++    }
++    strip.innerHTML = html;
++  };
++
++  function sincronizarEstadoConMapa() {
++    for (let i = 1; i <= TOTAL_ESPACIOS; i++) {
++      const clave = String(i);
++      if (Object.prototype.hasOwnProperty.call(cam.ocupacion, clave)) {
++        try {
++          if (typeof SPOT_STATE !== 'undefined') {
++            SPOT_STATE[i] = cam.ocupacion[clave] ? 'spot-occupied' : 'spot-free';
++          }
++        } catch (_) {}
++      }
++    }
++
++    if (typeof renderParkingMap === 'function') {
++      renderParkingMap();
++    } else {
++      window.renderMonitorParkingStrip();
++    }
++  }
++
++  function actualizarVistaConectada() {
++    setEstadoCamara('online', 'Online');
++    cam.connected = true;
++    setTexto('monitor-camera-name', 'ESP32-CAM de monitoreo');
++    setTexto('monitor-camera-address', cam.serverUrl || 'Sin dirección');
++    actualizarResumenCamara();
++  }
++
++  function actualizarFrame() {
++    if (!cam.serverUrl) return;
++    const img = el('cam-live-img');
++    const empty = el('cam-empty-state');
++    if (!img) return;
++
++    cam.lastFrameStart = Date.now();
++    img.src = `${cam.serverUrl}/api/captura?_=${Date.now()}`;
++    if (empty) empty.style.display = 'none';
++  }
++
++  function ajustarOverlay() {
++    const img = el('cam-live-img');
++    const canvas = el('cam-overlay-canvas');
++    if (!img || !canvas || !img.clientWidth || !img.clientHeight) return;
++
++    canvas.width = img.clientWidth;
++    canvas.height = img.clientHeight;
++    canvas.style.left = `${img.offsetLeft}px`;
++    canvas.style.top = `${img.offsetTop}px`;
++    cam.ultimaLatencia = Math.max(1, Date.now() - cam.lastFrameStart);
++    cam.ultimaLectura = new Date();
++    actualizarVistaConectada();
++    redibujarZonas();
++  }
++
++  function puntoPantallaAReal(evento) {
++    const img = el('cam-live-img');
++    const canvas = el('cam-overlay-canvas');
++    const rect = canvas.getBoundingClientRect();
++    const x = evento.clientX - rect.left;
++    const y = evento.clientY - rect.top;
++    return [
++      Math.round(x * (img.naturalWidth / canvas.width)),
++      Math.round(y * (img.naturalHeight / canvas.height))
++    ];
++  }
++
++  function puntoRealAPantalla(punto) {
++    const img = el('cam-live-img');
++    const canvas = el('cam-overlay-canvas');
++    if (!img || !canvas || !img.naturalWidth || !img.naturalHeight) return [0, 0];
++    return [
++      punto[0] * (canvas.width / img.naturalWidth),
++      punto[1] * (canvas.height / img.naturalHeight)
++    ];
++  }
++
++  function puntoDentroPoligono(punto, poligono) {
++    let dentro = false;
++    for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
++      const xi = poligono[i][0], yi = poligono[i][1];
++      const xj = poligono[j][0], yj = poligono[j][1];
++      const interseca = ((yi > punto[1]) !== (yj > punto[1])) &&
++        (punto[0] < (xj - xi) * (punto[1] - yi) / ((yj - yi) || 1) + xi);
++      if (interseca) dentro = !dentro;
++    }
++    return dentro;
++  }
++
++  function redibujarZonas() {
++    const canvas = el('cam-overlay-canvas');
++    if (!canvas) return;
++    const ctx = canvas.getContext('2d');
++    ctx.clearRect(0, 0, canvas.width, canvas.height);
++    ctx.lineWidth = 2;
++    ctx.font = '700 13px Inter, Segoe UI, sans-serif';
++
++    const puntosPantalla = cam.puntosActuales.map(puntoRealAPantalla);
++    ctx.fillStyle = '#4f8ef7';
++    puntosPantalla.forEach((p) => {
++      ctx.beginPath();
++      ctx.arc(p[0], p[1], 4, 0, Math.PI * 2);
++      ctx.fill();
++    });
++
++    if (puntosPantalla.length > 1) {
++      ctx.strokeStyle = '#4f8ef7';
++      ctx.beginPath();
++      ctx.moveTo(puntosPantalla[0][0], puntosPantalla[0][1]);
++      puntosPantalla.slice(1).forEach((p) => ctx.lineTo(p[0], p[1]));
++      ctx.stroke();
++    }
++
++    cam.zonas.forEach((zona) => {
++      if (!zona.puntos || !zona.puntos.length) return;
++      const pts = zona.puntos.map(puntoRealAPantalla);
++      const ocupada = !!zona.ocupada;
++      ctx.strokeStyle = ocupada ? '#ef4444' : '#22c55e';
++      ctx.fillStyle = ocupada ? 'rgba(239,68,68,.16)' : 'rgba(34,197,94,.12)';
++      ctx.beginPath();
++      ctx.moveTo(pts[0][0], pts[0][1]);
++      pts.slice(1).forEach((p) => ctx.lineTo(p[0], p[1]));
++      ctx.closePath();
++      ctx.fill();
++      ctx.stroke();
++
++      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
++      const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
++      ctx.fillStyle = ocupada ? '#ef4444' : '#22c55e';
++      ctx.fillText(`#${zona.nombre}`, cx - 12, cy);
++    });
++  }
++
++  async function configurarCamaraEnServidor() {
++    if (!cam.serverUrl || !cam.cameraUrl) return;
++    try {
++      await fetch(`${cam.serverUrl}/api/camara`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ ip: cam.cameraUrl })
++      });
++    } catch (err) {
++      console.warn('No se pudo enviar la IP de cámara al servidor:', err);
++    }
++  }
++
++  async function cargarZonasCamara() {
++    if (!cam.serverUrl) return;
++    try {
++      const res = await fetch(`${cam.serverUrl}/api/zonas`);
++      if (!res.ok) throw new Error(`HTTP ${res.status}`);
++      const data = await res.json();
++      cam.zonas = Array.isArray(data)
++        ? data.map((z) => ({ nombre: String(z.nombre), puntos: z.puntos || [], ocupada: !!z.ocupada }))
++        : [];
++      redibujarZonas();
++      window.renderMonitorParkingStrip();
++    } catch (err) {
++      console.warn('Aún no se pudieron cargar zonas de cámara:', err);
++    }
++  }
++
++  async function guardarZonasSilencioso() {
++    if (!cam.serverUrl) return;
++    try {
++      await fetch(`${cam.serverUrl}/api/zonas`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(cam.zonas)
++      });
++    } catch (err) {
++      console.warn('No se pudieron guardar zonas:', err);
++    }
++  }
++
++  async function actualizarEstadoCamara() {
++    if (!cam.serverUrl) return;
++    try {
++      const res = await fetch(`${cam.serverUrl}/api/estado`);
++      if (!res.ok) throw new Error(`HTTP ${res.status}`);
++      const estado = await res.json();
++      if (!Array.isArray(estado)) return;
++
++      estado.forEach((item) => {
++        const zona = cam.zonas.find((z) => String(z.nombre) === String(item.zona));
++        if (zona) zona.ocupada = !!item.ocupado;
++        cam.ocupacion[String(item.zona)] = !!item.ocupado;
++      });
++
++      redibujarZonas();
++      sincronizarEstadoConMapa();
++      actualizarResumenCamara();
++    } catch (err) {
++      setEstadoCamara('offline', 'Sin conexión');
++      console.warn('Servidor de cámara no disponible:', err.message || err);
++    }
++  }
++
++  window.abrirModalCamSettings = function abrirModalCamSettings() {
++    const modal = el('modal-cam-settings');
++    if (modal) modal.classList.add('open');
++  };
++
++  window.cerrarModalCamSettings = function cerrarModalCamSettings() {
++    const modal = el('modal-cam-settings');
++    if (modal) modal.classList.remove('open');
++  };
++
++  window.conectarCamara = async function conectarCamara() {
++    const inputCam = el('cfg-ip-camara');
++    const inputServer = el('cfg-ip-servidor');
++    const serverUrl = normalizarUrl(inputServer ? inputServer.value : '');
++    const cameraUrl = normalizarUrl(inputCam ? inputCam.value : '');
++
++    if (!serverUrl) {
++      toast('warning', 'Coloca la URL del servidor de cámara antes de conectar.', 'fa-triangle-exclamation');
++      return;
++    }
++
++    cam.serverUrl = serverUrl;
++    cam.cameraUrl = cameraUrl;
++    localStorage.setItem('smartpark_camera_server', cam.serverUrl);
++    localStorage.setItem('smartpark_camera_url', cam.cameraUrl);
++
++    setEstadoCamara('connecting', 'Conectando');
++    setTexto('monitor-camera-address', cam.serverUrl);
++
++    await configurarCamaraEnServidor();
++    await cargarZonasCamara();
++    await cargarSensibilidadCamara();
++
++    actualizarFrame();
++    if (cam.intervalFrame) clearInterval(cam.intervalFrame);
++    cam.intervalFrame = setInterval(actualizarFrame, 800);
++
++    await actualizarEstadoCamara();
++    if (cam.intervalEstado) clearInterval(cam.intervalEstado);
++    cam.intervalEstado = setInterval(actualizarEstadoCamara, 1200);
++
++    window.cerrarModalCamSettings();
++    toast('success', 'Cámara vinculada al monitoreo.', 'fa-camera');
++  };
++
++  window.setCamMode = function setCamMode(modo) {
++    cam.mode = modo === 'funcionamiento' ? 'funcionamiento' : 'prueba';
++    localStorage.setItem('smartpark_camera_mode', cam.mode);
++
++    const btnPrueba = el('cam-mode-btn-prueba');
++    const btnFunc = el('cam-mode-btn-funcionamiento');
++    const sub = el('cam-mode-switch-sub');
++    const banner = el('cam-mode-banner');
++
++    if (btnPrueba) btnPrueba.classList.toggle('active', cam.mode === 'prueba');
++    if (btnFunc) btnFunc.classList.toggle('active', cam.mode === 'funcionamiento');
++
++    document.body.classList.toggle('cam-locked', cam.mode === 'funcionamiento');
++
++    if (sub) {
++      sub.textContent = cam.mode === 'prueba'
++        ? 'Modo prueba — calibración de zonas habilitada'
++        : 'En funcionamiento — calibración bloqueada, detección activa';
++    }
++
++    if (banner) {
++      banner.className = `camera-mode-banner ${cam.mode}`;
++      banner.innerHTML = cam.mode === 'prueba'
++        ? '<i class="fa-solid fa-circle-info"></i> Modo prueba activo: calibra las zonas sobre la imagen de la cámara.'
++        : '<i class="fa-solid fa-lock"></i> En funcionamiento: la cámara solo marca espacios ocupados. El tiempo y el cobro se calculan por RFID.';
++    }
++  };
++
++  window.toggleModoNuevaZona = function toggleModoNuevaZona() {
++    if (cam.mode !== 'prueba') {
++      toast('warning', 'Cambia a modo prueba para calibrar zonas.', 'fa-lock');
++      return;
++    }
++    if (!cam.serverUrl) {
++      toast('warning', 'Conecta el servidor de cámara primero.', 'fa-plug-circle-exclamation');
++      return;
++    }
++    cam.modoNuevaZona = !cam.modoNuevaZona;
++    cam.numeroPendiente = null;
++    cam.puntosActuales = [];
++    const btn = el('btn-cam-nueva-zona');
++    if (btn) btn.classList.toggle('active', cam.modoNuevaZona);
++    setTexto('cam-toolbar-hint', cam.modoNuevaZona ? 'Marca 4 puntos sobre el video para crear una zona.' : '');
++    redibujarZonas();
++  };
++
++  window.camEditarEspacio = function camEditarEspacio(numero) {
++    if (cam.mode !== 'prueba') {
++      toast('warning', 'La edición está bloqueada en funcionamiento.', 'fa-lock');
++      return;
++    }
++    const zona = cam.zonas.find((z) => String(z.nombre) === String(numero));
++    if (zona) {
++      abrirModalZona(zona.nombre);
++      return;
++    }
++    if (!cam.serverUrl) {
++      toast('warning', 'Conecta la cámara primero.', 'fa-plug-circle-exclamation');
++      return;
++    }
++    cam.numeroPendiente = String(numero);
++    cam.modoNuevaZona = true;
++    cam.puntosActuales = [];
++    const btn = el('btn-cam-nueva-zona');
++    if (btn) btn.classList.add('active');
++    setTexto('cam-toolbar-hint', `Dibuja el espacio #${numero} sobre el video con 4 puntos.`);
++    redibujarZonas();
++  };
++
++  function abrirModalZona(nombre) {
++    cam.zonaEditando = String(nombre);
++    const input = el('zona-numero-input');
++    if (input) input.value = cam.zonaEditando;
++
++    const info = el('zona-estado-actual');
++    const zona = cam.zonas.find((z) => String(z.nombre) === cam.zonaEditando);
++    if (info && zona) {
++      info.innerHTML = `Estado actual: <b style="color:${zona.ocupada ? 'var(--red)' : 'var(--green)'}">${zona.ocupada ? 'OCUPADO' : 'LIBRE'}</b> · ${(zona.puntos || []).length} vértices calibrados`;
++    }
++
++    const modal = el('modal-zona');
++    if (modal) modal.classList.add('open');
++  }
++
++  window.cerrarModalZona = function cerrarModalZona() {
++    const modal = el('modal-zona');
++    if (modal) modal.classList.remove('open');
++    cam.zonaEditando = null;
++  };
++
++  window.guardarNumeroZona = async function guardarNumeroZona() {
++    const input = el('zona-numero-input');
++    const nuevo = input ? input.value.trim() : '';
++    if (!nuevo) {
++      toast('warning', 'Escribe un número de espacio válido.', 'fa-triangle-exclamation');
++      return;
++    }
++    const zona = cam.zonas.find((z) => String(z.nombre) === String(cam.zonaEditando));
++    if (zona) zona.nombre = nuevo;
++    window.cerrarModalZona();
++    await guardarZonasSilencioso();
++    await cargarZonasCamara();
++    window.renderMonitorParkingStrip();
++  };
++
++  window.eliminarZonaActual = async function eliminarZonaActual() {
++    if (!cam.zonaEditando) return;
++    cam.zonas = cam.zonas.filter((z) => String(z.nombre) !== String(cam.zonaEditando));
++    delete cam.ocupacion[String(cam.zonaEditando)];
++    window.cerrarModalZona();
++    await guardarZonasSilencioso();
++    redibujarZonas();
++    window.renderMonitorParkingStrip();
++    actualizarResumenCamara();
++  };
++
++  window.guardarZonasCam = async function guardarZonasCam() {
++    if (!cam.serverUrl) {
++      toast('warning', 'Conecta la cámara primero.', 'fa-plug-circle-exclamation');
++      return;
++    }
++    await guardarZonasSilencioso();
++    toast('success', 'Zonas guardadas. Ahora puedes recalibrar con el estacionamiento vacío.', 'fa-floppy-disk');
++  };
++
++  window.recalibrarZonas = async function recalibrarZonas() {
++    if (!cam.serverUrl) {
++      toast('warning', 'Conecta la cámara primero.', 'fa-plug-circle-exclamation');
++      return;
++    }
++    try {
++      const res = await fetch(`${cam.serverUrl}/api/recalibrar`, { method: 'POST' });
++      if (!res.ok) throw new Error(`HTTP ${res.status}`);
++      toast('success', 'Referencia recalibrada con el estacionamiento vacío.', 'fa-crosshairs');
++    } catch (err) {
++      toast('error', 'No se pudo recalibrar la cámara.', 'fa-triangle-exclamation');
++    }
++  };
++
++  window.camBorrarTodasLasZonas = async function camBorrarTodasLasZonas() {
++    if (cam.mode !== 'prueba') {
++      toast('warning', 'Cambia a modo prueba para borrar zonas.', 'fa-lock');
++      return;
++    }
++    if (!confirm(`Esto eliminará las ${cam.zonas.length} zonas calibradas. ¿Continuar?`)) return;
++    cam.zonas = [];
++    cam.ocupacion = {};
++    cam.puntosActuales = [];
++    await guardarZonasSilencioso();
++    redibujarZonas();
++    window.renderMonitorParkingStrip();
++    actualizarResumenCamara();
++  };
++
++  window.camSeleccionarZonaDebug = function camSeleccionarZonaDebug(numero) {
++    cam.zonaDebugActual = String(numero);
++    const wrap = el('cam-debug-imgwrap');
++    const tag = el('cam-debug-zona-tag');
++
++    document.querySelectorAll('.cam-space-mini').forEach((n) => n.classList.remove('selected'));
++    const boton = Array.from(document.querySelectorAll('.cam-space-mini')).find((n) => n.textContent.trim().startsWith(String(numero)));
++    if (boton) boton.classList.add('selected');
++
++    if (!wrap || !tag) return;
++    if (!cam.serverUrl) {
++      wrap.innerHTML = '<div class="cam-debug-empty">Conecta el servidor de cámara para depurar este espacio.</div>';
++      tag.style.display = 'none';
++      return;
++    }
++
++    const zonaExiste = cam.zonas.some((z) => String(z.nombre) === String(numero));
++    if (!zonaExiste) {
++      wrap.innerHTML = `<div class="cam-debug-empty">El espacio #${numero} aún no tiene zona calibrada. Usa el lápiz o Nueva zona.</div>`;
++      tag.style.display = 'none';
++      if (cam.intervalDebug) clearInterval(cam.intervalDebug);
++      return;
++    }
++
++    tag.textContent = `#${numero}`;
++    tag.style.display = 'inline-block';
++    wrap.innerHTML = '<img id="cam-debug-img" alt="Depuración de zona">';
++    actualizarDebugZona();
++    if (cam.intervalDebug) clearInterval(cam.intervalDebug);
++    cam.intervalDebug = setInterval(actualizarDebugZona, 900);
++  };
++
++  function actualizarDebugZona() {
++    if (!cam.zonaDebugActual || !cam.serverUrl) return;
++    const img = el('cam-debug-img');
++    if (img) img.src = `${cam.serverUrl}/debug/${encodeURIComponent(cam.zonaDebugActual)}?_=${Date.now()}`;
++  }
++
++  window.camSetLed = function camSetLed(valor) {
++    setTexto('cfg-led-val', valor);
++    if (!cam.cameraUrl) return;
++    fetch(`${cam.cameraUrl}/led?nivel=${valor}`).catch(() => {});
++  };
++
++  window.camSetConfig = function camSetConfig(param, valor) {
++    setTexto(`cfg-${param}-val`, valor);
++    if (!cam.cameraUrl) return;
++    fetch(`${cam.cameraUrl}/config?${encodeURIComponent(param)}=${encodeURIComponent(valor)}`).catch(() => {});
++  };
++
++  window.camSetXclk = function camSetXclk(valor) {
++    setTexto('cfg-xclk-val', valor);
++    if (!cam.cameraUrl) return;
++    fetch(`${cam.cameraUrl}/xclk?mhz=${valor}`).catch(() => {});
++  };
++
++  async function cargarSensibilidadCamara() {
++    if (!cam.serverUrl) return;
++    try {
++      const res = await fetch(`${cam.serverUrl}/api/sensibilidad`);
++      if (!res.ok) return;
++      const s = await res.json();
++      const mapa = {
++        'umbral_brillo': ['cfg-sens-brillo', 'cfg-sens-brillo-val'],
++        'umbral_bordes': ['cfg-sens-bordes', 'cfg-sens-bordes-val'],
++        'canny_bajo': ['cfg-sens-canny-bajo', 'cfg-sens-canny-bajo-val'],
++        'canny_alto': ['cfg-sens-canny-alto', 'cfg-sens-canny-alto-val']
++      };
++      Object.entries(mapa).forEach(([clave, ids]) => {
++        if (s[clave] === undefined) return;
++        const input = el(ids[0]);
++        const span = el(ids[1]);
++        if (input) input.value = s[clave];
++        if (span) span.textContent = s[clave];
++      });
++    } catch (_) {}
++  }
++
++  window.camSetSensibilidad = function camSetSensibilidad(clave, valor) {
++    const ids = {
++      umbral_brillo: 'cfg-sens-brillo-val',
++      umbral_bordes: 'cfg-sens-bordes-val',
++      canny_bajo: 'cfg-sens-canny-bajo-val',
++      canny_alto: 'cfg-sens-canny-alto-val'
++    };
++    setTexto(ids[clave], valor);
++    if (!cam.serverUrl) return;
++    fetch(`${cam.serverUrl}/api/sensibilidad`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ [clave]: valor })
++    }).catch(() => {});
++  };
++
++  window.capturarCamaraMonitor = function capturarCamaraMonitor() {
++    if (!cam.serverUrl) {
++      toast('warning', 'Conecta la cámara primero.', 'fa-camera');
++      return;
++    }
++    window.open(`${cam.serverUrl}/api/captura?_=${Date.now()}`, '_blank');
++  };
++
++  function inicializarCamaraMonitor() {
++    const inputCam = el('cfg-ip-camara');
++    const inputServer = el('cfg-ip-servidor');
++    if (inputCam && cam.cameraUrl) inputCam.value = cam.cameraUrl;
++    if (inputServer && cam.serverUrl) inputServer.value = cam.serverUrl;
++
++    const img = el('cam-live-img');
++    if (img) {
++      img.onload = ajustarOverlay;
++      img.onerror = () => {
++        setEstadoCamara('offline', 'Error de imagen');
++        const empty = el('cam-empty-state');
++        if (empty) empty.style.display = 'flex';
++      };
++    }
++
++    const canvas = el('cam-overlay-canvas');
++    if (canvas) {
++      canvas.addEventListener('click', async (evento) => {
++        if (cam.mode !== 'prueba') return;
++        const punto = puntoPantallaAReal(evento);
++
++        if (!cam.modoNuevaZona) {
++          const zona = cam.zonas.find((z) => z.puntos && puntoDentroPoligono(punto, z.puntos));
++          if (zona) abrirModalZona(zona.nombre);
++          return;
++        }
++
++        cam.puntosActuales.push(punto);
++        redibujarZonas();
++
++        if (cam.puntosActuales.length === 4) {
++          const nombre = cam.numeroPendiente || String(cam.zonas.length + 1);
++          cam.zonas.push({ nombre, puntos: cam.puntosActuales, ocupada: false });
++          cam.ocupacion[String(nombre)] = false;
++          cam.puntosActuales = [];
++          cam.modoNuevaZona = false;
++          cam.numeroPendiente = null;
++          const btn = el('btn-cam-nueva-zona');
++          if (btn) btn.classList.remove('active');
++          setTexto('cam-toolbar-hint', 'Zona creada. Guarda y recalibra con el estacionamiento vacío.');
++          await guardarZonasSilencioso();
++          redibujarZonas();
++          window.renderMonitorParkingStrip();
++          abrirModalZona(nombre);
++        }
++      });
++    }
++
++    window.setCamMode(cam.mode);
++    window.renderMonitorParkingStrip();
++    actualizarResumenCamara();
++    if (cam.serverUrl) {
++      // No autoconecta del todo para evitar errores si el servidor local no está abierto,
++      // pero deja la URL cargada para usar Conectar.
++      setTexto('monitor-camera-address', cam.serverUrl);
++    }
++  }
++
++  document.addEventListener('DOMContentLoaded', inicializarCamaraMonitor);
++})();

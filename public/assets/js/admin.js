@@ -3557,6 +3557,9 @@ function formatearFechaIoT(fecha) {
 }
 
 function actualizarMonitorCamaraReal() {
+  if (window.smartparkCamera && window.smartparkCamera.connected) {
+    return;
+  }
   const camara = IOT_DEVICES.find(
     (dispositivo) =>
       dispositivo.tipo === "ESP32-CAM"

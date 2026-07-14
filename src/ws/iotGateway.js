@@ -2,6 +2,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const PANEL_CLIENTS = new Set();
 const ESP32_CLIENTS = new Set();
+const CAMERA_CLIENTS = new Set();
 
 function convertirATexto(payload) {
   if (typeof payload === "string") return payload;
@@ -46,6 +47,14 @@ function broadcast(targets, payload) {
   return total;
 }
 
+function parseJsonSeguro(payload) {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
 function getClientRole(requestUrl = "") {
   try {
     const url = new URL(requestUrl, "http://localhost");
@@ -61,6 +70,15 @@ function getClientRole(requestUrl = "") {
       return "esp32";
     }
 
+    if (
+      client === "camera" ||
+      client === "cam" ||
+      client === "esp32cam" ||
+      client === "esp32-cam"
+    ) {
+      return "camera";
+    }
+
     return "panel";
   } catch {
     return "panel";
@@ -73,6 +91,7 @@ function getGatewayStatus() {
     type: "status",
     panels: PANEL_CLIENTS.size,
     devices: ESP32_CLIENTS.size,
+    cameras: CAMERA_CLIENTS.size,
     timestamp: new Date().toISOString()
   };
 }
@@ -81,12 +100,20 @@ function broadcastGatewayStatus() {
   const status = getGatewayStatus();
   broadcast(PANEL_CLIENTS, status);
   broadcast(ESP32_CLIENTS, status);
+  broadcast(CAMERA_CLIENTS, status);
+}
+
+function getRegistry(role) {
+  if (role === "esp32") return ESP32_CLIENTS;
+  if (role === "camera") return CAMERA_CLIENTS;
+  return PANEL_CLIENTS;
 }
 
 function attachIotGateway(server) {
   const wss = new WebSocketServer({
     server,
-    path: "/iot-ws"
+    path: "/iot-ws",
+    maxPayload: 12 * 1024 * 1024
   });
 
   wss.on("connection", (socket, request) => {
@@ -95,7 +122,7 @@ function attachIotGateway(server) {
     socket.role = role;
     socket.isAlive = true;
 
-    const registry = role === "esp32" ? ESP32_CLIENTS : PANEL_CLIENTS;
+    const registry = getRegistry(role);
     registry.add(socket);
 
     safeSend(socket, {
@@ -105,7 +132,9 @@ function attachIotGateway(server) {
       message:
         role === "esp32"
           ? "ESP32 conectado al puente IoT."
-          : "Panel web conectado al puente IoT.",
+          : role === "camera"
+            ? "ESP32-CAM conectada al puente IoT."
+            : "Panel web conectado al puente IoT.",
       ...getGatewayStatus()
     });
 
@@ -118,6 +147,8 @@ function attachIotGateway(server) {
         PANEL_CLIENTS.size +
         ". Dispositivos: " +
         ESP32_CLIENTS.size +
+        ". Camaras: " +
+        CAMERA_CLIENTS.size +
         "."
     );
 
@@ -129,17 +160,34 @@ function attachIotGateway(server) {
       const payload = convertirATexto(message);
 
       if (role === "panel") {
-        const sent = broadcast(ESP32_CLIENTS, payload);
+        const data = parseJsonSeguro(payload);
+        const target = String(data?.target || data?.to || "").toLowerCase();
+        const isCameraCommand =
+          target === "camera" ||
+          target === "esp32cam" ||
+          data?.type === "camera_cmd" ||
+          data?.type === "camera_subscribe";
+
+        const destino = isCameraCommand ? CAMERA_CLIENTS : ESP32_CLIENTS;
+        const sent = broadcast(destino, payload);
 
         if (sent === 0) {
           safeSend(socket, {
             gateway: true,
             type: "warning",
-            message: "No hay ESP32 conectado para recibir el comando.",
+            target: isCameraCommand ? "camera" : "esp32",
+            message: isCameraCommand
+              ? "No hay ESP32-CAM conectada para recibir el comando."
+              : "No hay ESP32 conectado para recibir el comando.",
             timestamp: new Date().toISOString()
           });
         }
 
+        return;
+      }
+
+      if (role === "camera") {
+        broadcast(PANEL_CLIENTS, payload);
         return;
       }
 
@@ -156,6 +204,8 @@ function attachIotGateway(server) {
           PANEL_CLIENTS.size +
           ". Dispositivos: " +
           ESP32_CLIENTS.size +
+          ". Camaras: " +
+          CAMERA_CLIENTS.size +
           "."
       );
 

@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <link rel="stylesheet" href="/assets/css/admin.css">
+<link rel="stylesheet" href="/assets/css/camera-monitor.css">
 </head>
 <body>
 <div id="app">
@@ -248,247 +249,265 @@
 
     <!-- ======== PAGE: MONITOR ======== -->
     <div class="page" id="page-monitor">
-      <div class="section-hd" style="margin-bottom:16px">       
-          <div>
-    <div class="section-title">
-      Monitoreo en Tiempo Real
-    </div>
+      <div class="section-hd" style="margin-bottom:16px">
+        <div>
+          <div class="section-title">Monitoreo en Tiempo Real</div>
+          <div class="section-sub">
+            Vista operativa ·
+            <span id="monitor-system-status" style="color:var(--text-muted)">Verificando sistema...</span>
+          </div>
+        </div>
 
-    <div class="section-sub">
-      Vista operativa ·
-      <span
-        id="monitor-system-status"
-        style="color:var(--text-muted)"
-      >
-        Verificando sistema...
-      </span>
-    </div>
-  </div>
-     
         <button
           class="btn btn-secondary btn-sm"
           id="monitor-capture-btn"
+          onclick="capturarCamaraMonitor()"
           disabled
-          title="La captura estará disponible cuando se conecte una cámara real"
+          title="La captura estará disponible cuando se conecte la cámara"
         >
           <i class="fa-solid fa-camera"></i>
           Captura no disponible
         </button>
       </div>
-      <div class="vehicle-panel">
-        <!-- Camera feed -->
-      <div class="camera-feed">
-      <div class="camera-top">
-        <span class="cam-rec" id="monitor-camera-rec">
-          <span class="dot"></span>
-          SIN SEÑAL
-        </span>
 
-        <div
-          id="monitor-camera-name"
-          style="font-size:13px;font-weight:600"
-        >
-          Cámara de entrada
+      <div class="monitor-note-card">
+        <i class="fa-solid fa-circle-info" style="color:var(--accent);margin-right:6px"></i>
+        El tiempo dentro del estacionamiento se calcula desde que la tarjeta RFID ingresa por la barrera de entrada hasta que sale por la barrera de salida. La cámara solo detecta qué espacio está ocupado durante ese periodo.
+      </div>
+
+      <div class="camera-mode-card">
+        <div class="camera-mode-info">
+          <div class="camera-mode-icon"><i class="fa-solid fa-camera-retro"></i></div>
+          <div>
+            <div class="camera-mode-title">Modo de la cámara</div>
+            <div class="camera-mode-sub" id="cam-mode-switch-sub">Modo prueba — calibración de zonas habilitada</div>
+          </div>
         </div>
-
-        <div
-          style="
-            margin-left:auto;
-            display:flex;
-            gap:8px;
-            align-items:center;
-          "
-        >
-          <span
-            class="badge badge-gray"
-            id="monitor-camera-status"
-          >
-            Sin conexión
-          </span>
-
-          <span
-            id="monitor-camera-address"
-            style="
-              font-size:11px;
-              color:var(--text-muted);
-            "
-          >
-            Sin dirección
-          </span>
+        <div class="camera-mode-toggle" id="cam-mode-switch-toggle">
+          <button type="button" id="cam-mode-btn-prueba" onclick="setCamMode('prueba')">
+            <i class="fa-solid fa-screwdriver-wrench"></i> Prueba
+          </button>
+          <button type="button" id="cam-mode-btn-funcionamiento" onclick="setCamMode('funcionamiento')">
+            <i class="fa-solid fa-play"></i> Funcionamiento
+          </button>
         </div>
       </div>
 
-      <div
-        class="camera-live"
-        id="monitor-camera-view"
-      >
-        <div
-          style="
-            min-height:360px;
-            width:100%;
-            display:flex;
-            flex-direction:column;
-            align-items:center;
-            justify-content:center;
-            text-align:center;
-            color:var(--text-muted);
-            background:#05070c;
-          "
-        >
-          <i
-            class="fa-solid fa-video-slash"
-            style="
-              font-size:42px;
-              margin-bottom:14px;
-              opacity:0.55;
-            "
-          ></i>
-
-          <div
-            style="
-              font-size:14px;
-              font-weight:600;
-              color:var(--text-secondary);
-            "
-          >
-            Transmisión no disponible
-          </div>
-
-          <div
-            style="
-              font-size:11px;
-              margin-top:5px;
-            "
-          >
-            Esperando conexión con la ESP32-CAM
-          </div>
-        </div>
+      <div class="camera-mode-banner prueba" id="cam-mode-banner">
+        <i class="fa-solid fa-circle-info"></i>
+        Modo prueba activo: calibra las zonas sobre la imagen de la cámara.
       </div>
 
-      <div
-        style="
-          padding:12px 16px;
-          border-top:1px solid var(--border);
-          display:flex;
-          gap:10px;
-          flex-wrap:wrap;
-        "
-      >
-        <div style="flex:1;min-width:120px">
-          <div
-            style="
-              font-size:10px;
-              color:var(--text-muted);
-              font-weight:600;
-              text-transform:uppercase;
-              letter-spacing:0.05em;
-              margin-bottom:2px;
-            "
-          >
-            Vehículos activos
+      <div class="vehicle-panel camera-monitor-layout">
+        <div class="camera-feed camera-feed-vision">
+          <div class="camera-top">
+            <span class="cam-rec" id="monitor-camera-rec">
+              <span class="dot"></span>
+              SIN SEÑAL
+            </span>
+
+            <div id="monitor-camera-name" style="font-size:13px;font-weight:600">
+              ESP32-CAM de monitoreo
+            </div>
+
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+              <span class="cam-conn-badge offline" id="cam-conn-badge">
+                <span class="dot"></span>Sin conectar
+              </span>
+              <span class="badge badge-gray" id="monitor-camera-status">Sin conexión</span>
+              <span id="monitor-camera-address" style="font-size:11px;color:var(--text-muted)">Sin dirección</span>
+              <button class="btn-cam-icon" id="btn-cam-settings" onclick="abrirModalCamSettings()" title="Ajustes de cámara">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+            </div>
           </div>
 
-          <div
-            id="monitor-detected-count"
-            style="
-              font-size:16px;
-              font-weight:700;
-              color:var(--accent);
-            "
-          >
-            0 activos
-          </div>
-        </div>
-
-        <div style="flex:1;min-width:120px">
-          <div
-            style="
-              font-size:10px;
-              color:var(--text-muted);
-              font-weight:600;
-              text-transform:uppercase;
-              letter-spacing:0.05em;
-              margin-bottom:2px;
-            "
-          >
-            Latencia
+          <div class="cam-toolbar">
+            <button class="btn-cam" id="btn-cam-nueva-zona" onclick="toggleModoNuevaZona()">
+              <i class="fa-solid fa-vector-square"></i> Nueva zona
+            </button>
+            <button class="btn-cam" id="btn-cam-recalibrar" onclick="recalibrarZonas()">
+              <i class="fa-solid fa-crosshairs"></i> Recalibrar vacío
+            </button>
+            <button class="btn-cam" id="btn-cam-guardar" onclick="guardarZonasCam()">
+              <i class="fa-solid fa-floppy-disk"></i> Guardar zonas
+            </button>
+            <button class="btn-cam danger" id="btn-cam-borrar" onclick="camBorrarTodasLasZonas()">
+              <i class="fa-solid fa-trash"></i> Borrar zonas
+            </button>
+            <span class="cam-toolbar-hint" id="cam-toolbar-hint">Conecta la cámara para empezar</span>
           </div>
 
-          <div
-            id="monitor-camera-latency"
-            style="
-              font-size:16px;
-              font-weight:700;
-            "
-          >
-            —
-          </div>
-        </div>
-
-        <div style="flex:1;min-width:120px">
-          <div
-            style="
-              font-size:10px;
-              color:var(--text-muted);
-              font-weight:600;
-              text-transform:uppercase;
-              letter-spacing:0.05em;
-              margin-bottom:2px;
-            "
-          >
-            Última lectura
+          <div class="camera-live camera-live-vision" id="monitor-camera-view">
+            <img id="cam-live-img" class="cam-live-img" alt="Vista ESP32-CAM">
+            <canvas id="cam-overlay-canvas" class="cam-overlay-canvas"></canvas>
+            <div class="cam-empty-state" id="cam-empty-state">
+              <i class="fa-solid fa-video-slash"></i>
+              <strong>Transmisión no disponible</strong>
+              <span>La ESP32-CAM se conecta por WSS al mismo Railway.</span>
+            </div>
+            <div class="cam-status-bar">
+              <span><span class="live-dot"></span>LIVE</span>
+              <span id="cam-detectados">Detectados: 0 / 10</span>
+              <span id="cam-ts">Esperando lectura</span>
+            </div>
           </div>
 
-          <div
-            id="monitor-camera-last"
-            style="
-              font-size:16px;
-              font-weight:700;
-            "
-          >
-            Sin registro
+          <div class="cam-metrics-row">
+            <div>
+              <div class="cam-metric-label">Vehículos activos</div>
+              <div class="cam-metric-value accent" id="monitor-detected-count">0 activos</div>
+            </div>
+            <div>
+              <div class="cam-metric-label">Espacios ocupados</div>
+              <div class="cam-metric-value red" id="cam-stat-ocupados">0</div>
+            </div>
+            <div>
+              <div class="cam-metric-label">Espacios libres</div>
+              <div class="cam-metric-value green" id="cam-stat-libres">10</div>
+            </div>
+            <div>
+              <div class="cam-metric-label">Latencia</div>
+              <div class="cam-metric-value" id="monitor-camera-latency">Sin dato</div>
+            </div>
+            <div>
+              <div class="cam-metric-label">Última lectura</div>
+              <div class="cam-metric-value" id="monitor-camera-last">Sin registro</div>
+            </div>
+            <div style="display:none">
+              <div class="cam-metric-label">Estado del dispositivo</div>
+              <div class="cam-metric-value" id="monitor-camera-device-state">Sin conexión</div>
+            </div>
           </div>
-        </div>
 
-        <div style="flex:1;min-width:120px">
-          <div
-            style="
-              font-size:10px;
-              color:var(--text-muted);
-              font-weight:600;
-              text-transform:uppercase;
-              letter-spacing:0.05em;
-              margin-bottom:2px;
-            "
-          >
-            Estado del dispositivo
-          </div>
-
-          <div
-            id="monitor-camera-device-state"
-            style="
-              font-size:16px;
-              font-weight:700;
-            "
-          >
-            Sin conexión
+          <div class="cam-sens-bar">
+            <div class="cam-sens-item" title="Umbral de brillo">
+              <label>Brillo</label>
+              <input type="range" min="5" max="60" value="20" id="cfg-sens-brillo" oninput="camSetSensibilidad('umbral_brillo',this.value)">
+              <span id="cfg-sens-brillo-val">20</span>
+            </div>
+            <div class="cam-sens-item" title="Umbral de bordes">
+              <label>Bordes</label>
+              <input type="range" min="0.005" max="0.1" step="0.005" value="0.02" id="cfg-sens-bordes" oninput="camSetSensibilidad('umbral_bordes',this.value)">
+              <span id="cfg-sens-bordes-val">0.02</span>
+            </div>
+            <div class="cam-sens-item" title="Canny — umbral bajo">
+              <label>Canny↓</label>
+              <input type="range" min="5" max="100" value="20" id="cfg-sens-canny-bajo" oninput="camSetSensibilidad('canny_bajo',this.value)">
+              <span id="cfg-sens-canny-bajo-val">20</span>
+            </div>
+            <div class="cam-sens-item" title="Canny — umbral alto">
+              <label>Canny↑</label>
+              <input type="range" min="20" max="200" value="80" id="cfg-sens-canny-alto" oninput="camSetSensibilidad('canny_alto',this.value)">
+              <span id="cfg-sens-canny-alto-val">80</span>
+            </div>
           </div>
         </div>
-      </div>
 
-    </div>
-
-        <!-- Vehicles list -->
-        <div class="vehicles-list">
+        <div class="vehicles-list camera-side">
           <div class="v-list-hd">
             <div style="font-size:13px;font-weight:600">Vehículos en Estacionamiento</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="v-feed-count">0 activos · actualizado ahora</div>
           </div>
+
           <div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:10px 12px">
-            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px">Espacios · Vista rápida</div>
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:4px">Espacios · Vista por cámara</div>
+            <div id="cam-spaces-sub" style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">0 ocupados · 10 libres</div>
             <div id="monitor-parking-strip" style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px"></div>
           </div>
+
+          <div class="cam-debug-panel">
+            <div class="cam-debug-label">
+              <i class="fa-solid fa-magnifying-glass-chart"></i>
+              Depurar zona
+              <span class="cam-debug-zona-tag" id="cam-debug-zona-tag" style="display:none"></span>
+            </div>
+            <div class="cam-debug-imgwrap" id="cam-debug-imgwrap">
+              <div class="cam-debug-empty">Selecciona un espacio para ver la detección en detalle.</div>
+            </div>
+          </div>
+
           <div class="v-list-body" id="vehicles-feed" style="border-top:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: AJUSTES DE CÁMARA -->
+    <div class="modal-overlay" id="modal-cam-settings">
+      <div class="modal">
+        <div class="modal-hd">
+          <span class="modal-title"><i class="fa-solid fa-gear" style="color:var(--accent);margin-right:6px"></i>Ajustes de cámara</span>
+          <div class="modal-close" onclick="cerrarModalCamSettings()"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="modal-body">
+          <div class="modal-section-label">Conexión WSS directa</div>
+          <div class="modal-field-row">
+            <div class="modal-field">
+              <label>Dominio Railway usado por la ESP32-CAM</label>
+              <input type="text" id="cfg-ip-camara" placeholder="proyecto-final-iot-production.up.railway.app" readonly>
+            </div>
+            <div class="modal-field">
+              <label>WebSocket de cámara</label>
+              <input type="text" id="cfg-ip-servidor" placeholder="wss://tu-proyecto.up.railway.app/iot-ws?client=panel&camera=1">
+            </div>
+          </div>
+          <div class="camera-wss-help">La ESP32-CAM no necesita IP pública ni servidor Python. Solo debe cargar el firmware WSS, conectarse al WiFi y apuntar al mismo dominio de Railway.</div>
+          <button class="btn-cam full" onclick="conectarCamara()">
+            <i class="fa-solid fa-plug-circle-check"></i> Conectar visor WSS
+          </button>
+
+          <div class="modal-section-label" style="margin-top:18px">Controles rápidos de ESP32-CAM</div>
+          <div class="modal-slider-row">
+            <label>LED flash</label>
+            <input type="range" min="0" max="255" value="0" id="cfg-led" oninput="camSetLed(this.value)">
+            <span id="cfg-led-val">0</span>
+          </div>
+          <div class="modal-slider-row">
+            <label>Calidad JPEG</label>
+            <input type="range" min="8" max="30" value="14" id="cfg-quality" oninput="camSetConfig('quality',this.value)">
+            <span id="cfg-quality-val">14</span>
+          </div>
+          <div class="modal-slider-row">
+            <label>Brillo</label>
+            <input type="range" min="-2" max="2" value="0" id="cfg-brightness" oninput="camSetConfig('brightness',this.value)">
+            <span id="cfg-brightness-val">0</span>
+          </div>
+          <div class="modal-slider-row">
+            <label>Contraste</label>
+            <input type="range" min="-2" max="2" value="0" id="cfg-contrast" oninput="camSetConfig('contrast',this.value)">
+            <span id="cfg-contrast-val">0</span>
+          </div>
+          <div class="modal-slider-row">
+            <label>Saturación</label>
+            <input type="range" min="-2" max="2" value="0" id="cfg-saturation" oninput="camSetConfig('saturation',this.value)">
+            <span id="cfg-saturation-val">0</span>
+          </div>
+          <div class="modal-slider-row">
+            <label>XCLK MHz</label>
+            <input type="range" min="6" max="20" value="20" id="cfg-xclk" oninput="camSetXclk(this.value)">
+            <span id="cfg-xclk-val">20</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: ASIGNAR / EDITAR ZONA -->
+    <div class="modal-overlay" id="modal-zona">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-hd">
+          <span class="modal-title"><i class="fa-solid fa-square-parking" style="color:var(--accent);margin-right:6px"></i>Espacio de estacionamiento</span>
+          <div class="modal-close" onclick="cerrarModalZona()"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="modal-body">
+          <div class="modal-field" id="zona-estado-actual" style="font-size:12px;color:var(--text-secondary);margin-bottom:14px"></div>
+          <div class="modal-field">
+            <label>Número de espacio asignado</label>
+            <input type="text" id="zona-numero-input" placeholder="Ej: 1, 2, 3...">
+          </div>
+          <div class="modal-btn-row">
+            <button class="btn-cam danger" onclick="eliminarZonaActual()"><i class="fa-solid fa-trash"></i> Eliminar zona</button>
+            <button class="btn-cam primario" onclick="guardarNumeroZona()"><i class="fa-solid fa-check"></i> Guardar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1849,6 +1868,7 @@
 <div id="toast-container"></div>
 
 <script src="/assets/js/admin.js"></script>
+<script src="/assets/js/camera-monitor.js"></script>
 </div><!-- /app -->
 </body>
 </html>

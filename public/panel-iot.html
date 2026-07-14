@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -180,23 +180,29 @@
               </section>
 
               <section class="sensor-group-card">
-                <div class="sensor-group-title"><i class="ti ti-scan"></i> Módulo RFID — RC522 / NTAG215</div>
+                <div class="sensor-group-title"><i class="ti ti-scan"></i> Doble módulo RFID — RC522 / NTAG215</div>
                 <div class="rfid-tabs">
-                  <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Leer</button>
+                  <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Lectores</button>
                   <button type="button" class="rfid-tab" data-rfid-page="rfid-write"><i class="ti ti-edit"></i> Escribir tarjeta</button>
                 </div>
 
                 <div id="rfid-read" class="rfid-page active">
-                  <div class="rfid-grid">
+                  <div class="rfid-grid rfid-grid-three">
                     <article class="rfid-card">
-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-nfc"></i></div><div><strong>Lector RFID</strong><span>RC522 · SPI · ESP32</span></div></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de entrada</strong><span>Lectura + escritura · RC522</span></div></div>
                       <div class="gpio-list"><span>SS: GPIO 5</span><span>RST: GPIO 4</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
-                      <div class="rfid-connection"><span id="rfid-status-dot" class="sensor-pill off"></span><span id="rfid-status-text">Sin conexión al ESP32</span></div>
-                      <p>La última tarjeta se actualiza cuando el ESP32 transmite un UID por WebSocket.</p>
+                      <div class="rfid-connection"><span id="rfid-entry-status-dot" class="sensor-pill off"></span><span id="rfid-entry-status-text">Sin conexión al ESP32</span></div>
+                      <p>Este lector registra la entrada, permite escribir nuevas tarjetas y guarda el minuto simulado de ingreso.</p>
                     </article>
                     <article class="rfid-card">
-                      <h3><i class="ti ti-id-badge-2"></i> Ãšltima lectura</h3>
-                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector RC522</small></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de salida</strong><span>Lectura + cobro · RC522</span></div></div>
+                      <div class="gpio-list"><span>SS: GPIO 17</span><span>RST: GPIO 16</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
+                      <div class="rfid-connection"><span id="rfid-exit-status-dot" class="sensor-pill off"></span><span id="rfid-exit-status-text">Sin conexión al ESP32</span></div>
+                      <p>Este lector calcula el pago, descuenta el saldo y reescribe la tarjeta antes de abrir la salida.</p>
+                    </article>
+                    <article class="rfid-card">
+                      <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
+                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de entrada o salida</small></div>
                     </article>
                   </div>
                 </div>
@@ -204,7 +210,7 @@
                 <div id="rfid-write" class="rfid-page">
                   <div class="rfid-grid">
                     <article class="rfid-card">
-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se enviarán al firmware para escritura</span></div></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán únicamente desde el RFID de entrada</span></div></div>
                       <div class="write-grid">
                         <label class="full"><span>Carro o modelo</span><input id="rfid-car" type="text" placeholder="Toyota Corolla"></label>
                         <label><span>Marca</span><input id="rfid-brand" type="text" placeholder="Toyota"></label>
@@ -215,14 +221,14 @@
                         <label><span>DNI</span><input id="rfid-dni" type="text" maxlength="8" inputmode="numeric" placeholder="45678912"></label>
                         <label><span>Tipo</span><select id="rfid-type"><option value="Sedan">Sedán</option><option value="SUV">SUV</option><option value="Deportivo">Deportivo</option><option value="Hatchback">Hatchback</option><option value="Pickup">Pickup</option><option value="Camioneta">Camioneta / Van</option><option value="Moto">Moto</option></select></label>
                       </div>
-                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta</button>
+                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta de entrada</button>
                       <button id="btn-rfid-cancel" class="rfid-cancel-button" type="button" hidden>Cancelar escritura</button>
                       <div id="rfid-write-status" class="write-status" hidden></div>
                     </article>
                     <article class="rfid-card instructions-card">
                       <h3><i class="ti ti-info-circle"></i> Procedimiento</h3>
-                      <ol><li>Completa los datos.</li><li>Presiona “Escribir en tarjeta”.</li><li>Acerca la NTAG215 al RC522.</li><li>Espera la confirmación enviada por el ESP32.</li></ol>
-                      <p><strong>Importante:</strong> esta acción puede sobrescribir los datos anteriores de la tarjeta.</p>
+                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir en tarjeta de entrada”.</li><li>Acerca la NTAG215 al lector RFID de entrada.</li><li>En funcionamiento, la entrada guarda el ingreso y la salida descuenta el pago.</li></ol>
+                      <p><strong>Importante:</strong> el lector de salida no escribe registros nuevos; solo actualiza el saldo después del cobro.</p>
                     </article>
                   </div>
                 </div>
@@ -249,7 +255,7 @@
               </article>
 
               <article class="panel mysql-log-panel">
-                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Ãšltimos eventos guardados en MySQL.</p></div></div>
+                <div class="panel-header"><div><h2><i class="ti ti-history"></i> Logs almacenados</h2><p>Últimos eventos guardados en MySQL.</p></div></div>
                 <div id="iot-logs" class="iot-logs"><div class="empty-state">Cargando logs…</div></div>
               </article>
             </aside>

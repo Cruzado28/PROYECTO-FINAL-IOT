@@ -46,3 +46,15 @@ body.embed-mode .toast-container{
 body.embed-dashboard .dashboard-body{align-items:start}
 body.embed-dashboard .left-column>.panel{height:100%}
 @media(max-width:1000px){body.embed-dashboard .dashboard-body{grid-template-columns:1fr}}
+
+/* Tema claro/oscuro sincronizado con el panel principal */
+:root[data-theme="light"]{--bg:#f4f7fb;--surface:#ffffff;--card:#ffffff;--border:#d8e0ef;--accent:#2563eb;--accent-dim:rgba(37,99,235,.12);--green:#0f9f6e;--green-dim:rgba(15,159,110,.12);--red:#dc2626;--red-dim:rgba(220,38,38,.12);--warn:#d97706;--warn-dim:rgba(217,119,6,.12);--purple:#7c3aed;--purple-dim:rgba(124,58,237,.12);--text:#172033;--sub:#4b5875;--muted:#7b879f}
+:root[data-theme="light"] body{background:var(--bg);color:var(--text)}
+:root[data-theme="light"] input,:root[data-theme="light"] select{background:#fff;color:var(--text);border-color:var(--border)}
+:root[data-theme="light"] .camera-panel{background:#eef3fb}
+:root[data-theme="light"] .camera-grid{background-image:linear-gradient(rgba(37,99,235,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(37,99,235,.08) 1px,transparent 1px)}
+:root[data-theme="light"] .camera-footer{background:rgba(255,255,255,.86);color:var(--sub)}
+.rfid-grid-three{grid-template-columns:1fr 1fr 1.1fr}
+.sensor-page-wrap.manual-locked .manual-control{opacity:.45;cursor:not-allowed;filter:grayscale(.25)}
+@media(max-width:1180px){.rfid-grid-three{grid-template-columns:1fr 1fr}.rfid-grid-three .rfid-card:last-child{grid-column:1/-1}}
+@media(max-width:760px){.rfid-grid-three{grid-template-columns:1fr}.rfid-grid-three .rfid-card:last-child{grid-column:auto}}

@@ -649,6 +649,29 @@ window.fetch = async function (recurso, opciones = {}) {
 
 let sistemaInicializado = false;
 
+function obtenerTemaActual(){
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+function obtenerAcentoActual(){
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4f8ef7';
+}
+
+function enviarTemaAFrame(frame){
+  if (!frame || !frame.contentWindow) return;
+  frame.contentWindow.postMessage({
+    type: 'smartparking:theme',
+    theme: obtenerTemaActual(),
+    accent: obtenerAcentoActual()
+  }, window.location.origin);
+}
+
+function sincronizarTemaEmbebidos(){
+  ['dashboard-modern-frame','sensors-live-frame'].forEach((id)=>{
+    enviarTemaAFrame(document.getElementById(id));
+  });
+}
+
 function cargarVistaIntegrada(tipo) {
   const configuracion = {
     dashboard: {
@@ -671,6 +694,7 @@ function cargarVistaIntegrada(tipo) {
   frame.addEventListener("load", () => {
     frame.hidden = false;
     if (loading) loading.style.display = "none";
+    enviarTemaAFrame(frame);
   }, { once: true });
 
   frame.src = frame.dataset.src;
@@ -929,6 +953,7 @@ function toggleTheme(){
   const isDark=html.getAttribute('data-theme')==='dark';
   html.setAttribute('data-theme',isDark?'light':'dark');
   updateThemeUI();
+  sincronizarTemaEmbebidos();
   if(charts.hourly)reinitCharts();
 }
 function updateThemeUI(){
@@ -951,6 +976,7 @@ function setAccent(color,hover,el){
   document.documentElement.style.setProperty('--accent-hover',hover);
   document.querySelectorAll('.color-opt').forEach(o=>o.classList.remove('active'));
   el.classList.add('active');
+  sincronizarTemaEmbebidos();
   showToast('success','Color principal actualizado','fa-palette');
 }
 
@@ -4267,6 +4293,7 @@ function aplicarPreferenciasVisuales(
   );
 
   updateThemeUI();
+  sincronizarTemaEmbebidos();
 
   if (charts.hourly) {
     reinitCharts();

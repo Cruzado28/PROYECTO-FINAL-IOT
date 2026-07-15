@@ -10,15 +10,15 @@
 #include <ESP32Servo.h>
 
 // ============================================================
-// SMART PARK - ESP32 FINAL CON REGISTRO AUTOMATICO POR UID
+// SMART PARK - ESP32 FINAL SIN SALDO / PAGO POR TIEMPO
 // ============================================================
 // Cambios aplicados:
 // - 1 RFID de ACCESO: entrada + salida + incidencias.
-// - 1 RFID de PAGO: solo procesa el pago.
-// - NO requiere registrar/escribir manualmente la tarjeta.
+// - 1 RFID de PAGO: solo calcula y marca el pago por tiempo.
+// - NO requiere registrar/escribir manualmente la tarjeta ni manejar saldos.
 // - Al ingresar, la placa se genera con los 3 ultimos caracteres del UID.
 // - Los espacios cambian en vivo: Libre, Estacionado, Pagado, Incidencia.
-// - El pago usa la tarifa editable de la pagina.
+// - El pago usa la tarifa editable de la pagina y NO descuenta saldo.
 // - Funciona en modo PRUEBA y FUNCIONAMIENTO.
 // - Sin ESP32-CAM, sin potenciometro, sin laser, sin LDR, sin segundo servo.
 // - El tiempo empieza en el lector de acceso cuando ingresa y termina al salir.
@@ -347,6 +347,21 @@ int buscarEspacioPorUID(const String& uid) {
   return -1;
 }
 
+int buscarUnicoVehiculoPendientePago() {
+  // Ayuda para la demo: si solo hay un vehículo pendiente de pago,
+  // el lector de pago puede aplicar el cobro aunque la lectura UID falle
+  // o se use otra tarjeta por error. Si hay varios vehículos, exige UID correcto.
+  int encontrado = -1;
+  uint8_t contador = 0;
+  for (uint8_t i = 0; i < TOTAL_ESPACIOS; i++) {
+    if (espacios[i].estado == 1 || espacios[i].estado == 3) {
+      encontrado = i;
+      contador++;
+    }
+  }
+  return contador == 1 ? encontrado : -1;
+}
+
 int buscarEspacioLibre() {
   for (uint8_t i = 0; i < TOTAL_ESPACIOS; i++) {
     if (espacios[i].estado == 0) return i;
@@ -584,15 +599,26 @@ void procesarAcceso(const String& uid) {
   }
 }
 
-void procesarPago(const String& uid) {
-  int idx = buscarEspacioPorUID(uid);
+void procesarPago(const String& uidLeido) {
+  // El RFID de pago NO lee ni escribe saldo. Solo usa el UID para buscar
+  // el vehículo que ya ingresó y calcula el cobro por tiempo transcurrido.
+  int idx = buscarEspacioPorUID(uidLeido);
+
   if (idx < 0) {
-    actualizarUltimaLectura(uid, "pago", -1);
-    enviarEventoPago("error", uid, "Pago denegado: el vehiculo no tiene ingreso activo.", 0.0, 0, -1);
-    mostrarMensaje("PAGO DENEGADO", "No registrado", 2500);
-    return;
+    int unico = buscarUnicoVehiculoPendientePago();
+    if (unico >= 0) {
+      // Respaldo útil para la exposición cuando solo se está probando un carro.
+      idx = unico;
+      Serial.println("[PAGO] UID no coincidió, pero hay un único vehículo pendiente. Se aplicará pago a ese espacio.");
+    } else {
+      actualizarUltimaLectura(uidLeido, "pago", -1);
+      enviarEventoPago("error", uidLeido, "Pago rechazado: no hay ingreso activo con esta tarjeta. Primero debe ingresar por el RFID de acceso.", 0.0, 0, -1);
+      mostrarMensaje("PAGO DENEGADO", "Sin ingreso activo", 2500);
+      return;
+    }
   }
 
+  String uidSesion = espacios[idx].uid;
   unsigned long ahoraMin = minutoActualReal();
   unsigned long ingresoMin = espacios[idx].ingresoMin;
   if (ingresoMin > ahoraMin) ingresoMin = ahoraMin;
@@ -600,21 +626,22 @@ void procesarPago(const String& uid) {
   if (duracionMin == 0) duracionMin = 1;
 
   if (espacios[idx].estado == 2) {
-    actualizarUltimaLectura(uid, "pago", idx);
-    enviarEventoPago("success", uid, "Pago ya aplicado. Puede salir por el RFID de acceso.", 0.0, duracionMin, idx);
+    actualizarUltimaLectura(uidSesion, "pago", idx);
+    enviarEventoPago("success", uidSesion, "Este vehículo ya está pagado. Puede salir por el RFID de acceso.", espacios[idx].pago, duracionMin, idx);
     mostrarMensaje("YA PAGADO", "Puede salir", 2500);
     return;
   }
 
-  // Si venia con incidencia, el pago la corrige.
+  // Si venía con incidencia por intentar salir sin pagar, el pago la corrige.
+  // No se maneja saldo por tarjeta: solo se calcula y se marca como pagado.
   float pago = calcularPagoEstacionamiento(duracionMin);
   espacios[idx].estado = 2;
   espacios[idx].pago = pago;
   espacios[idx].pagoMin = ahoraMin;
   espacios[idx].limiteSalidaMin = ahoraMin + tiempoSalidaPostPagoMin;
-  actualizarUltimaLectura(uid, "pago", idx);
+  actualizarUltimaLectura(uidSesion, "pago", idx);
 
-  enviarEventoPago("success", uid, "Pago aplicado. Ahora puede salir por el RFID de acceso.", pago, duracionMin, idx);
+  enviarEventoPago("success", uidSesion, "Pago calculado por tiempo y marcado como pagado. Ahora puede salir por el RFID de acceso.", pago, duracionMin, idx);
   mostrarMensaje("PAGO OK", "S/ " + String(pago, 2), 3000);
 }
 
@@ -838,7 +865,7 @@ void setup() {
   Serial.println(" SMART PARK - ACCESO/SALIDA + PAGO");
   Serial.println(" RFID ACCESO: SS=17 RST=16");
   Serial.println(" RFID PAGO  : SS=5  RST=4");
-  Serial.println(" Registro automatico: placa = ultimos 3 caracteres UID");
+  Serial.println(" Placa automatica = ultimos 3 caracteres UID | Pago sin saldo");
   Serial.println("========================================");
 
   Wire.begin(21, 22);

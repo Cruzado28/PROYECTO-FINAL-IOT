@@ -31,26 +31,125 @@
     const byDate = readJson(STORAGE_INCIDENTS_BY_DATE, {});
     return Object.entries(byDate).flatMap(([date, rows]) => Array.isArray(rows) ? rows.map(r => ({...r, fechaISO: r.fechaISO || date})) : []);
   }
-  function normalizedHistoryRows(){
-    return allHistoryRows().map(row => ({
+  function normalizarFilaHistorialReporte(row){
+    const pago = Number(row.pago || 0);
+    const duracionMin = Number(row.tiempoMin || row.duracionMin || 0);
+    return {
       key: row.key || `${row.fechaISO}|${row.uid}|${row.espacio}`,
       date: row.fecha || row.date || formatDate(row.fechaISO),
       dateISO: row.fechaISO || isoFromLocal(row.fecha || row.date),
-      in: row.ingreso || row.in || "—",
-      out: row.salida || row.out || "—",
-      total: row.tiempo || row.total || fmtDuration(row.tiempoMin || row.duracionMin),
+      in: row.ingreso || row.in || row.horaIngreso || "—",
+      out: row.salida || row.out || row.horaSalida || "—",
+      total: row.tiempo || row.total || (duracionMin > 0 ? `${duracionMin} min` : "—"),
       driver: row.conductor || row.driver || "Registro automático",
       plate: row.placa || row.plate || "—",
       type: row.tipoVehiculo || row.type || "Vehículo",
       status: row.estado || row.status || "Activa",
-      consume: row.consumo || row.consume || fmtMoney(row.pago),
+      consume: row.consumo || row.consume || fmtMoney(pago),
       discount: row.descuento || row.discount || "S/ 0.00",
-      total_pay: row.total || row.total_pay || fmtMoney(row.pago),
+      total_pay: row.total || row.total_pay || fmtMoney(pago),
       espacio: row.espacio || "—",
       uid: row.uid || "—",
-      pago: Number(row.pago || 0),
+      pago,
+      tiempoMin: duracionMin,
       detalle: row.detalle || "Registro generado por RFID"
-    })).sort((a,b)=>`${b.dateISO} ${b.in}`.localeCompare(`${a.dateISO} ${a.in}`));
+    };
+  }
+
+  function segundosDesdeHora(value){
+    const m = String(value || "").match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    return (Number(m[1]) * 3600) + (Number(m[2]) * 60) + Number(m[3] || 0);
+  }
+
+  function calcularMinutosEntre(ingreso, salida){
+    const a = segundosDesdeHora(ingreso);
+    const b = segundosDesdeHora(salida);
+    if (a === null || b === null) return 0;
+    let diff = b - a;
+    if (diff < 0) diff += 24 * 3600;
+    if (diff <= 0) return 0;
+    return Math.max(1, Math.ceil(diff / 60));
+  }
+
+  function identidadSesion(row){
+    const uid = String(row.uid || "").trim().toUpperCase();
+    const plate = String(row.plate || row.placa || "").trim().toUpperCase();
+    if (uid && uid !== "—") return `uid:${uid}`;
+    if (plate && plate !== "—") return `plate:${plate}`;
+    return `key:${row.key || row.dateISO || Math.random()}`;
+  }
+
+  function aplicarTiempoCalculado(row){
+    const currentMin = Number(row.tiempoMin || 0);
+    const calcMin = row.out && row.out !== "—" ? calcularMinutosEntre(row.in, row.out) : 0;
+    const min = currentMin > 0 ? currentMin : calcMin;
+    row.tiempoMin = min;
+    row.total = min > 0 ? `${min} min` : "—";
+    return row;
+  }
+
+  function fusionarDatosSesion(destino, fuente, estadoForzado){
+    const salidaFuente = fuente.out && fuente.out !== "—" ? fuente.out : (/final|salida/i.test(fuente.status || "") ? fuente.in : "—");
+    if ((!destino.in || destino.in === "—") && fuente.in && fuente.in !== "—") destino.in = fuente.in;
+    if (salidaFuente && salidaFuente !== "—") destino.out = salidaFuente;
+
+    const pago = Math.max(Number(destino.pago || 0), Number(fuente.pago || 0));
+    if (pago > 0) {
+      destino.pago = pago;
+      destino.consume = fuente.consume && fuente.consume !== "S/ 0.00" ? fuente.consume : fmtMoney(pago);
+      destino.total_pay = fuente.total_pay && fuente.total_pay !== "S/ 0.00" ? fuente.total_pay : fmtMoney(pago);
+    }
+
+    if (fuente.espacio && destino.espacio === "—") destino.espacio = fuente.espacio;
+    if (fuente.uid && destino.uid === "—") destino.uid = fuente.uid;
+    if (fuente.plate && destino.plate === "—") destino.plate = fuente.plate;
+    if (fuente.detalle && fuente.detalle !== "Registro generado por RFID") destino.detalle = fuente.detalle;
+
+    destino.status = estadoForzado || fuente.status || destino.status;
+    return aplicarTiempoCalculado(destino);
+  }
+
+  function combinarSesionesHistorial(rows){
+    const ordenadas = rows.slice().sort((a,b)=>`${a.dateISO} ${a.in}`.localeCompare(`${b.dateISO} ${b.in}`));
+    const resultado = [];
+
+    for (const row of ordenadas) {
+      const identity = identidadSesion(row);
+      const sameDay = (r) => r.dateISO === row.dateISO && identidadSesion(r) === identity;
+      const isFinal = /final|salida/i.test(String(row.status || "")) || (row.out && row.out !== "—");
+      const isPayment = /pag/i.test(String(row.status || "")) || Number(row.pago || 0) > 0;
+      const isIncident = /incid/i.test(String(row.status || ""));
+
+      if (isFinal) {
+        const openIndex = resultado.map((r, i) => ({r, i})).reverse().find(x => sameDay(x.r) && (!x.r.out || x.r.out === "—"));
+        if (openIndex) {
+          fusionarDatosSesion(openIndex.r, row, "Finalizada");
+          continue;
+        }
+        row.out = row.out && row.out !== "—" ? row.out : row.in;
+        resultado.push(aplicarTiempoCalculado(row));
+        continue;
+      }
+
+      if (isPayment || isIncident) {
+        const openIndex = resultado.map((r, i) => ({r, i})).reverse().find(x => sameDay(x.r) && (!x.r.out || x.r.out === "—"));
+        if (openIndex) {
+          fusionarDatosSesion(openIndex.r, row, isIncident ? "Incidencia" : "Pagado");
+          continue;
+        }
+      }
+
+      resultado.push(aplicarTiempoCalculado(row));
+    }
+
+    return resultado;
+  }
+
+  function normalizedHistoryRows(){
+    const normalizadas = allHistoryRows().map(normalizarFilaHistorialReporte);
+    return combinarSesionesHistorial(normalizadas)
+      .sort((a,b)=>`${b.dateISO} ${b.in}`.localeCompare(`${a.dateISO} ${a.in}`));
   }
   function formatDate(iso){
     const parts = String(iso||"").split("-");

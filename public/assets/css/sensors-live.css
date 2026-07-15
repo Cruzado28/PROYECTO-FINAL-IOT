@@ -3,15 +3,12 @@
 
 /* Ajuste final: hardware actualizado sin cámara, sin potenciómetro, sin láser/LDR y con una sola barrera */
 .esp32-toolbar{grid-template-columns:minmax(230px,1fr) minmax(280px,1.4fr) auto}
-.sensor-top-row{grid-template-columns:minmax(0,1fr) 220px}
+.sensor-top-row{grid-template-columns:minmax(0,1fr)}
 .sensor-clock-card{background:var(--card);color:var(--text)}
 .sensor-clock-card>div:first-child>strong{color:var(--text);text-shadow:none}
 .clock-speed-info{text-align:left}
 .clock-speed-info .sim-date-input{width:100%;height:36px;margin:5px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 10px;outline:none}
 .clock-speed-info .sim-date-input:focus{border-color:var(--accent)}
-.operation-rate-widget{padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:7px}
-.operation-rate-widget strong{font-size:26px;color:var(--accent);font-family:monospace}
-.operation-rate-widget small{color:var(--muted);font-size:10px;line-height:1.45}
 .single-barrier-grid{grid-template-columns:260px minmax(0,1fr) minmax(0,1fr);align-items:stretch}
 .access-servo-card{min-height:205px}
 .access-rule-card{background:var(--bg);border:1px solid var(--border);border-radius:13px;padding:16px;display:flex;align-items:flex-start;gap:12px;color:var(--sub)}

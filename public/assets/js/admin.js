@@ -11,6 +11,24 @@ let EVENTS_DATA = [];
 let IOT_DEVICES = [];
 
 let IOT_LOGS = [];
+let INCIDENCIAS_DATA = [];
+
+const TIPOS_IOT_OCULTOS = new Set([
+  "ESP32-CAM",
+  "OLED",
+  "Puntero laser",
+  "LDR",
+  "Potenciometro"
+]);
+
+const CODIGOS_IOT_OCULTOS = new Set([
+  "SERVO-SALIDA",
+  "OLED-ENTRADA",
+  "OLED-SALIDA",
+  "LDR-SALIDA",
+  "LASER-SALIDA",
+  "ESP32-CAM-01"
+]);
 
 let rolesData = [
   {name:'Usuario Común',icon:'fa-user',discount:'0%',hours:'0h gratis',color:'gray',desc:'Tarifa estándar sin beneficios'},
@@ -80,6 +98,7 @@ async function init(){
   await cargarEventosReales();
   await cargarVehiculosReales();
   await cargarHistorialReal();
+  await cargarIncidenciasReportes();
   await cargarTarifaReal();
   await cargarRolesReales();
   await cargarPromocionesReales();
@@ -919,7 +938,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementB
 // ============================================================
 // NAVIGATION
 // ============================================================
-const PAGE_NAMES={dashboard:'Dashboard',sensors:'Sensores en Vivo',monitor:'Monitoreo en Tiempo Real',vehicles:'Vehículos',history:'Historial y Reportes',tariffs:'Tarifas y Beneficios',settings:'Configuración'};
+const PAGE_NAMES={dashboard:'Dashboard',sensors:'Sensores en Vivo',vehicles:'Vehículos',history:'Historial y Reportes',tariffs:'Tarifas y Beneficios',settings:'Configuración'};
 
 function navigateTo(page,el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -937,6 +956,7 @@ function navigateTo(page,el){
 
   if (page === 'dashboard') cargarVistaIntegrada('dashboard');
   if (page === 'sensors') cargarVistaIntegrada('sensors');
+  if (page === 'history') cargarIncidenciasReportes();
 
   closeDetailPanel();
 }
@@ -2935,6 +2955,7 @@ function aplicarFiltrosHistorial() {
   });
 
   renderHistoryTable(filtrados);
+  renderIncidenciasTable();
 
   showToast(
     "success",
@@ -2961,12 +2982,149 @@ function limpiarFiltrosHistorial() {
   });
 
   renderHistoryTable();
+  renderIncidenciasTable();
 
   showToast(
     "info",
     "Filtros limpiados",
     "fa-xmark"
   );
+}
+
+function extraerFechaHoraIncidencia(fechaHora) {
+  const texto = String(fechaHora || "");
+  const partes = texto.split(" ");
+
+  if (partes.length !== 2) {
+    return { fechaISO: "", fecha: "—", hora: "—" };
+  }
+
+  const [anio, mes, dia] = partes[0].split("-");
+
+  return {
+    fechaISO: partes[0],
+    fecha: anio && mes && dia ? `${dia}/${mes}/${anio}` : partes[0],
+    hora: partes[1]
+  };
+}
+
+function clasificarIncidencia(log) {
+  const texto = `${log.codigoEvento || ""} ${log.mensaje || ""}`.toLowerCase();
+
+  if (texto.includes("doble") || texto.includes("ya está dentro") || texto.includes("ya esta dentro") || texto.includes("sesión activa") || texto.includes("sesion activa")) {
+    return "Doble ingreso";
+  }
+
+  if (texto.includes("sin pago") || texto.includes("debe pagar") || texto.includes("pago pendiente") || texto.includes("salida rechazada")) {
+    return "Salida sin pago";
+  }
+
+  if (texto.includes("saldo insuficiente")) {
+    return "Saldo insuficiente";
+  }
+
+  return "Incidencia";
+}
+
+function extraerPlacaOUid(texto) {
+  const valor = String(texto || "");
+  const placa = valor.match(/\b[A-Z]{3}[- ]?\d{3}\b/i);
+  if (placa) return placa[0].toUpperCase().replace(" ", "-");
+
+  const uid = valor.match(/\b(?:[0-9A-F]{2}:){3,}[0-9A-F]{2}\b/i);
+  if (uid) return uid[0].toUpperCase();
+
+  return "—";
+}
+
+function filtrarIncidenciasActuales() {
+  const placa = (document.getElementById("h-plate")?.value || "").trim().toLowerCase();
+  const fechaInicio = document.getElementById("h-from")?.value || "";
+  const fechaFin = document.getElementById("h-to")?.value || "";
+
+  return INCIDENCIAS_DATA.filter((incidencia) => {
+    const coincidePlaca = !placa || incidencia.placaUid.toLowerCase().includes(placa) || incidencia.detalle.toLowerCase().includes(placa);
+    const coincideInicio = !fechaInicio || incidencia.fechaISO >= fechaInicio;
+    const coincideFin = !fechaFin || incidencia.fechaISO <= fechaFin;
+    return coincidePlaca && coincideInicio && coincideFin;
+  });
+}
+
+function renderIncidenciasTable() {
+  const tbody = document.getElementById("incidencias-tbody");
+  const contador = document.getElementById("incidencias-count");
+
+  if (!tbody) {
+    return;
+  }
+
+  const incidencias = filtrarIncidenciasActuales();
+
+  if (contador) {
+    contador.textContent = `${incidencias.length} incidencia${incidencias.length === 1 ? "" : "s"}`;
+  }
+
+  if (incidencias.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">
+          No hay incidencias con los filtros seleccionados.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = incidencias.map((incidencia) => `
+    <tr>
+      <td>${escaparTextoIoT(incidencia.fecha)}</td>
+      <td>${escaparTextoIoT(incidencia.hora)}</td>
+      <td><span class="badge badge-red">${escaparTextoIoT(incidencia.tipo)}</span></td>
+      <td style="font-family:monospace">${escaparTextoIoT(incidencia.placaUid)}</td>
+      <td>${escaparTextoIoT(incidencia.detalle)}</td>
+      <td>${escaparTextoIoT(incidencia.origen)}</td>
+    </tr>
+  `).join("");
+}
+
+async function cargarIncidenciasReportes() {
+  try {
+    const respuesta = await fetch("/api/v2/iot/logs?limite=100");
+
+    if (!respuesta.ok) {
+      throw new Error("No se pudieron cargar incidencias");
+    }
+
+    const datos = await respuesta.json();
+
+    if (!datos.ok || !Array.isArray(datos.logs)) {
+      throw new Error(datos.mensaje || "Respuesta de incidencias no válida");
+    }
+
+    INCIDENCIAS_DATA = datos.logs
+      .filter((log) => {
+        const texto = `${log.nivel || ""} ${log.codigoEvento || ""} ${log.mensaje || ""}`.toLowerCase();
+        return texto.includes("incidencia") || texto.includes("sin pago") || texto.includes("debe pagar") || texto.includes("saldo insuficiente") || texto.includes("salida rechazada") || texto.includes("doble") || texto.includes("sesión activa") || texto.includes("sesion activa");
+      })
+      .map((log) => {
+        const fecha = extraerFechaHoraIncidencia(log.fechaHora);
+        const detalle = log.mensaje || "Incidencia registrada";
+
+        return {
+          ...fecha,
+          tipo: clasificarIncidencia(log),
+          placaUid: extraerPlacaOUid(detalle),
+          detalle,
+          origen: log.dispositivo || "Sistema IoT"
+        };
+      });
+
+    renderIncidenciasTable();
+  } catch (error) {
+    console.error("Error al cargar incidencias:", error);
+    INCIDENCIAS_DATA = [];
+    renderIncidenciasTable();
+  }
 }
 
 async function cargarGraficosHistorialReal() {
@@ -3327,6 +3485,43 @@ function renderIoTDevices() {
   ).join("");
 }
 
+
+function debeOcultarDispositivoIoT(dispositivo) {
+  const tipo = dispositivo.tipoDispositivo || dispositivo.tipo || "";
+  const codigo = dispositivo.codigo || "";
+  return TIPOS_IOT_OCULTOS.has(tipo) || CODIGOS_IOT_OCULTOS.has(codigo);
+}
+
+function calcularResumenDispositivosVisibles(resumen) {
+  if (!Array.isArray(IOT_DEVICES) || IOT_DEVICES.length === 0) {
+    return {
+      online: Number(resumen.dispositivosOnline) || 0,
+      offline: Number(resumen.dispositivosOffline) || 0,
+      advertencia: Number(resumen.dispositivosAdvertencia) || 0,
+      mantenimiento: Number(resumen.dispositivosMantenimiento) || 0,
+      latencia: Number(resumen.latenciaPromedioMs) || 0
+    };
+  }
+
+  const total = { online: 0, offline: 0, advertencia: 0, mantenimiento: 0, latencia: 0 };
+  let latencias = 0;
+
+  IOT_DEVICES.forEach((dispositivo) => {
+    if (dispositivo.status === "online") total.online += 1;
+    else if (dispositivo.status === "advertencia") total.advertencia += 1;
+    else if (dispositivo.status === "mantenimiento") total.mantenimiento += 1;
+    else total.offline += 1;
+
+    if (Number(dispositivo.latency) > 0) {
+      total.latencia += Number(dispositivo.latency);
+      latencias += 1;
+    }
+  });
+
+  total.latencia = latencias > 0 ? Math.round(total.latencia / latencias) : 0;
+  return total;
+}
+
 function formatearSincronizacionIoT(fecha) {
   if (!fecha) {
     return "Sin registros";
@@ -3418,13 +3613,16 @@ async function cargarResumenIoTReal() {
 
     const resumen = datos.resumen;
 
+    const resumenVisible =
+      calcularResumenDispositivosVisibles(resumen);
+
     const totalAlertas =
-      Number(resumen.dispositivosOffline || 0) +
-      Number(resumen.dispositivosAdvertencia || 0) +
-      Number(resumen.dispositivosMantenimiento || 0);
+      Number(resumenVisible.offline || 0) +
+      Number(resumenVisible.advertencia || 0) +
+      Number(resumenVisible.mantenimiento || 0);
 
     const latencia =
-      Number(resumen.latenciaPromedioMs) || 0;
+      Number(resumenVisible.latencia) || 0;
 
     const badgeOnline =
       document.getElementById("iot-online-badge");
@@ -3454,7 +3652,7 @@ async function cargarResumenIoTReal() {
           class="status-dot dot-green"
           style="margin:0;margin-right:4px"
         ></span>
-        ${Number(resumen.dispositivosOnline)} Online
+        ${Number(resumenVisible.online)} Online
       `;
     }
 
@@ -3465,9 +3663,9 @@ async function cargarResumenIoTReal() {
         }`;
 
       badgeAlertas.title =
-        `${Number(resumen.dispositivosOffline)} offline, ` +
-        `${Number(resumen.dispositivosAdvertencia)} en advertencia y ` +
-        `${Number(resumen.dispositivosMantenimiento)} en mantenimiento`;
+        `${Number(resumenVisible.offline)} offline, ` +
+        `${Number(resumenVisible.advertencia)} en advertencia y ` +
+        `${Number(resumenVisible.mantenimiento)} en mantenimiento`;
     }
 
     if (kpiLatencia) {
@@ -3521,14 +3719,9 @@ async function cargarResumenIoTReal() {
 function obtenerIconoDispositivoIoT(tipo) {
   const iconos = {
     "ESP32": "fa-microchip",
-    "ESP32-CAM": "fa-camera",
     "RFID": "fa-satellite-dish",
     "Sensor": "fa-wave-square",
-    "OLED": "fa-desktop",
     "Servomotor": "fa-gears",
-    "Puntero laser": "fa-bullseye",
-    "LDR": "fa-sun",
-    "Potenciometro": "fa-sliders",
     "Otro": "fa-plug"
   };
 
@@ -3556,158 +3749,6 @@ function formatearFechaIoT(fecha) {
   return `${fechaPartes[2]}/${fechaPartes[1]}/${fechaPartes[0]} ${partes[1]}`;
 }
 
-function actualizarMonitorCamaraReal() {
-  if (window.smartparkCamera && window.smartparkCamera.connected) {
-    return;
-  }
-  const camara = IOT_DEVICES.find(
-    (dispositivo) =>
-      dispositivo.tipo === "ESP32-CAM"
-  );
-
-  const nombre =
-    document.getElementById("monitor-camera-name");
-
-  const estado =
-    document.getElementById("monitor-camera-status");
-
-  const direccion =
-    document.getElementById("monitor-camera-address");
-
-  const latencia =
-    document.getElementById("monitor-camera-latency");
-
-  const ultimaLectura =
-    document.getElementById("monitor-camera-last");
-
-  const estadoDispositivo =
-    document.getElementById(
-      "monitor-camera-device-state"
-    );
-
-  const indicador =
-    document.getElementById("monitor-camera-rec");
-
-  const estadoSistema =
-    document.getElementById(
-      "monitor-system-status"
-    );
-
-  const activos = vehiclesData.filter(
-    (vehiculo) => vehiculo.inside
-  ).length;
-
-  const contador =
-    document.getElementById(
-      "monitor-detected-count"
-    );
-
-  if (contador) {
-    contador.textContent =
-      `${activos} activo${activos === 1 ? "" : "s"}`;
-  }
-
-  if (!camara) {
-    if (nombre) {
-      nombre.textContent = "Cámara no registrada";
-    }
-
-    if (estado) {
-      estado.textContent = "Sin conexión";
-      estado.className = "badge badge-gray";
-    }
-
-    if (direccion) {
-      direccion.textContent = "Sin dirección";
-    }
-
-    if (latencia) {
-      latencia.textContent = "—";
-    }
-
-    if (ultimaLectura) {
-      ultimaLectura.textContent = "Sin registro";
-    }
-
-    if (estadoDispositivo) {
-      estadoDispositivo.textContent =
-        "No registrada";
-    }
-
-        if (estadoSistema) {
-      estadoSistema.textContent =
-        "Cámara no registrada";
-
-      estadoSistema.style.color =
-        "var(--red)";
-    }
-
-    return;
-  }
-
-  const estaOnline =
-    camara.status === "online";
-  
-  if (estadoSistema) {
-    estadoSistema.textContent =
-      estaOnline
-        ? "Sistema conectado"
-        : "Sistema sin conexión";
-
-    estadoSistema.style.color =
-      estaOnline
-        ? "var(--green)"
-        : "var(--red)";
-  }
-
-  if (nombre) {
-    nombre.textContent = camara.name;
-  }
-
-  if (estado) {
-    estado.textContent =
-      estaOnline ? "Online" : camara.status;
-
-    estado.className =
-      estaOnline
-        ? "badge badge-green"
-        : "badge badge-red";
-  }
-
-  if (direccion) {
-    direccion.textContent = camara.ip;
-  }
-
-  if (latencia) {
-    latencia.textContent =
-      camara.latency > 0
-        ? `${camara.latency} ms`
-        : "Sin dato";
-  }
-
-  if (ultimaLectura) {
-    ultimaLectura.textContent =
-      camara.last || "Sin registro";
-  }
-
-  if (estadoDispositivo) {
-    estadoDispositivo.textContent =
-      estaOnline ? "Operativo" : camara.status;
-
-    estadoDispositivo.style.color =
-      estaOnline
-        ? "var(--green)"
-        : "var(--red)";
-  }
-
-  if (indicador) {
-    indicador.innerHTML = `
-      <span class="dot"></span>
-      ${estaOnline ? "CONECTADA" : "SIN SEÑAL"}
-    `;
-  }
-}
-
 async function cargarDispositivosIoTReales() {
   try {
     const respuesta = await fetch(
@@ -3732,8 +3773,9 @@ async function cargarDispositivosIoTReales() {
       );
     }
 
-    IOT_DEVICES = datos.dispositivos.map(
-      (dispositivo) => ({
+    IOT_DEVICES = datos.dispositivos
+      .filter((dispositivo) => !debeOcultarDispositivoIoT(dispositivo))
+      .map((dispositivo) => ({
         idDispositivo:
           dispositivo.idDispositivo,
 
@@ -3786,8 +3828,6 @@ async function cargarDispositivosIoTReales() {
     );
 
     renderIoTDevices();
-
-    actualizarMonitorCamaraReal();
 
     console.log(
       "Dispositivos IoT actualizados con datos reales",

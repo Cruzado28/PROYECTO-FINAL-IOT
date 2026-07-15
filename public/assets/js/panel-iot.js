@@ -5,8 +5,7 @@ import { cargarIot } from "./iot.js";
 import {
   inicializarSensoresEnVivo,
   activarSensoresEnVivo,
-  detenerSensoresEnVivo,
-  aplicarCamaraGuardada
+  detenerSensoresEnVivo
 } from "./sensors-live.js";
 
 const loginScreen = document.getElementById("login-screen");
@@ -58,6 +57,13 @@ function mostrarLogin() {
   detenerSensoresEnVivo();
 
   if (isEmbed && window.parent !== window) {
+    // En modo embebido no debe mostrarse otro formulario de inicio de sesión.
+    // El login válido es únicamente el de la página principal.
+    loginScreen.hidden = true;
+    loginScreen.style.display = "none";
+    appShell.hidden = false;
+    configurarModoEmbed();
+
     window.parent.postMessage({
       type: "smartparking:session-expired"
     }, window.location.origin);
@@ -173,7 +179,6 @@ setInterval(() => {
   if (embedPage === "sensors") {
     activarSensoresEnVivo();
     await actualizarIot();
-    aplicarCamaraGuardada();
   } else {
     await actualizarDashboard();
   }

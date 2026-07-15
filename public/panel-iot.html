@@ -84,11 +84,6 @@
               <span>WebSocket del ESP32</span>
               <input id="esp32-ws-url" type="text" value="" placeholder="Automático: wss://este-dominio/iot-ws?client=panel" spellcheck="false" autocomplete="off">
             </label>
-            <label class="sensor-config-field camera-url-field">
-              <span>URL de ESP32-CAM</span>
-              <input id="esp32-camera-url" type="text" placeholder="Ejemplo: http://192.168.4.2:81/stream" spellcheck="false" autocomplete="off">
-            </label>
-            <button id="btn-camera-apply" class="sensor-action-button"><i class="ti ti-camera"></i> Aplicar cámara</button>
             <button id="btn-esp32-reconnect" class="sensor-action-button primary"><i class="ti ti-refresh"></i> Reconectar</button>
           </section>
 
@@ -104,7 +99,7 @@
                   <button id="mode-btn-live" type="button"><i class="ti ti-player-play"></i> Funcionamiento</button>
                 </div>
               </section>
-              <div id="mode-banner" class="mode-banner test"><i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span></div>
+              <div id="mode-banner" class="mode-banner test"><i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar manualmente la barrera de acceso.</span></div>
 
               <section class="sensor-top-row">
                 <article class="sensor-clock-card">
@@ -114,31 +109,24 @@
                     <small id="sim-date">---</small>
                   </div>
                   <div class="clock-speed-info">
-                    <span>Velocidad según potenciómetro</span>
-                    <strong id="sim-speed-badge">x1</strong>
-                    <small id="sim-speed-desc">Sin datos</small>
-                    <div class="speed-track"><span id="sim-speed-bar"></span></div>
+                    <span>Fecha de operación</span>
+                    <input id="sim-date-input" class="sim-date-input" type="date">
+                    <small id="sim-date-help">Las entradas, pagos e incidencias usarán esta fecha.</small>
                   </div>
                 </article>
 
-                <article class="pwm-widget">
-                  <div class="pwm-title">Potenciómetro <span class="gpio-tag">GPIO 32</span></div>
-                  <div class="pwm-gauge-wrap">
-                    <svg viewBox="0 0 110 70" aria-hidden="true">
-                      <path class="gauge-bg" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132"/>
-                      <path id="pwm-arc" class="gauge-fill" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132" stroke-dashoffset="132"/>
-                    </svg>
-                    <strong id="pwm-val">--</strong>
-                  </div>
-                  <small id="pwm-sub">ADC: -- / 4095<br>Sin datos</small>
+                <article class="operation-rate-widget">
+                  <div class="pwm-title">Simulación de cobro</div>
+                  <strong>S/ 1.00</strong>
+                  <small>por cada minuto real transcurrido dentro del estacionamiento.</small>
                 </article>
               </section>
 
               <section class="sensor-group-card">
-                <div class="sensor-group-title"><i class="ti ti-barrier-block"></i> Barreras de acceso, láser y LDR</div>
-                <div class="barrier-grid">
-                  <article class="servo-card">
-                    <div class="servo-heading"><strong>Entrada</strong><span id="servo-entry-state" class="servo-state closed">SIN DATOS</span></div>
+                <div class="sensor-group-title"><i class="ti ti-barrier-block"></i> Barrera única de acceso</div>
+                <div class="barrier-grid single-barrier-grid">
+                  <article class="servo-card access-servo-card">
+                    <div class="servo-heading"><strong>Entrada / salida</strong><span id="servo-entry-state" class="servo-state closed">SIN DATOS</span></div>
                     <div class="servo-gauge-wrap">
                       <svg viewBox="0 0 96 86" aria-hidden="true">
                         <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
@@ -146,41 +134,30 @@
                         <text id="servo-entry-angle" x="48" y="56" text-anchor="middle">--°</text>
                       </svg>
                     </div>
-                    <span class="gpio-tag">Servo · GPIO 26</span>
+                    <span class="gpio-tag">Servo único · GPIO 26</span>
                     <button id="btn-servo-entry" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
                   </article>
 
-                  <div class="center-sensors">
-                    <article class="mini-sensor-card">
-                      <div class="mini-sensor-icon laser"><i class="ti ti-laser-pointer"></i></div>
-                      <div><span>Módulo láser</span><strong id="laser-value">SIN DATOS</strong><small id="laser-detail">Esperando ESP32…</small></div>
-                      <span id="laser-dot" class="sensor-pill off"></span>
-                    </article>
-                    <button id="btn-laser" class="manual-control laser-button" type="button"><i class="ti ti-power"></i> Encender láser</button>
-                    <article class="mini-sensor-card">
-                      <div class="mini-sensor-icon ldr"><i class="ti ti-brightness"></i></div>
-                      <div><span>Sensor LDR</span><strong id="ldr-value">SIN DATOS</strong><small id="ldr-detail">Esperando ESP32…</small><em class="gpio-tag">GPIO 13</em></div>
-                      <span id="ldr-dot" class="sensor-pill off"></span>
-                    </article>
-                  </div>
-
-                  <article class="servo-card">
-                    <div class="servo-heading"><strong>Salida</strong><span id="servo-exit-state" class="servo-state closed">SIN DATOS</span></div>
-                    <div class="servo-gauge-wrap">
-                      <svg viewBox="0 0 96 86" aria-hidden="true">
-                        <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
-                        <path id="servo-exit-arc" class="servo-gauge-value" d="M 8 72 A 42 42 0 1 1 88 72" stroke-dasharray="148" stroke-dashoffset="148"/>
-                        <text id="servo-exit-angle" x="48" y="56" text-anchor="middle">--°</text>
-                      </svg>
+                  <article class="access-rule-card">
+                    <i class="ti ti-shield-check"></i>
+                    <div>
+                      <strong>Reglas del acceso</strong>
+                      <p>El lector de acceso registra entrada o salida. Si el vehículo ya está dentro, no puede volver a ingresar. Si intenta salir sin pago, se registra una incidencia.</p>
                     </div>
-                    <span class="gpio-tag">Servo · GPIO 25</span>
-                    <button id="btn-servo-exit" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
+                  </article>
+
+                  <article class="access-rule-card">
+                    <i class="ti ti-cash-register"></i>
+                    <div>
+                      <strong>Pago separado</strong>
+                      <p>El segundo RFID solo procesa el pago y actualiza el saldo de la tarjeta. Luego el lector de acceso permite la salida.</p>
+                    </div>
                   </article>
                 </div>
               </section>
 
               <section class="sensor-group-card">
-                <div class="sensor-group-title"><i class="ti ti-scan"></i> Doble módulo RFID — RC522 / NTAG215</div>
+                <div class="sensor-group-title"><i class="ti ti-scan"></i> RFID de acceso y RFID de pago — RC522 / NTAG215</div>
                 <div class="rfid-tabs">
                   <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Lectores</button>
                   <button type="button" class="rfid-tab" data-rfid-page="rfid-write"><i class="ti ti-edit"></i> Escribir tarjeta</button>
@@ -189,20 +166,20 @@
                 <div id="rfid-read" class="rfid-page active">
                   <div class="rfid-grid rfid-grid-three">
                     <article class="rfid-card">
-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de entrada</strong><span>Lectura + escritura · RC522</span></div></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de acceso</strong><span>Entrada / salida · RC522</span></div></div>
                       <div class="gpio-list"><span>SS: GPIO 5</span><span>RST: GPIO 4</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
                       <div class="rfid-connection"><span id="rfid-entry-status-dot" class="sensor-pill off"></span><span id="rfid-entry-status-text">Sin conexión al ESP32</span></div>
-                      <p>Este lector registra la entrada, permite escribir nuevas tarjetas y guarda el minuto simulado de ingreso.</p>
+                      <p>Este lector decide si el vehículo ingresa o sale. Si intenta ingresar dos veces o salir sin pago, se registra una incidencia.</p>
                     </article>
                     <article class="rfid-card">
-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de salida</strong><span>Lectura + cobro · RC522</span></div></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de pago</strong><span>Cobro y actualización de saldo · RC522</span></div></div>
                       <div class="gpio-list"><span>SS: GPIO 17</span><span>RST: GPIO 16</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
                       <div class="rfid-connection"><span id="rfid-exit-status-dot" class="sensor-pill off"></span><span id="rfid-exit-status-text">Sin conexión al ESP32</span></div>
-                      <p>Este lector calcula el pago, descuenta el saldo y reescribe la tarjeta antes de abrir la salida.</p>
+                      <p>Este lector calcula el pago por los minutos reales transcurridos, descuenta saldo y deja la tarjeta habilitada para salir.</p>
                     </article>
                     <article class="rfid-card">
                       <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
-                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de entrada o salida</small></div>
+                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de acceso o pago</small></div>
                     </article>
                   </div>
                 </div>
@@ -210,7 +187,7 @@
                 <div id="rfid-write" class="rfid-page">
                   <div class="rfid-grid">
                     <article class="rfid-card">
-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán únicamente desde el RFID de entrada</span></div></div>
+                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán desde el RFID de pago</span></div></div>
                       <div class="write-grid">
                         <label class="full"><span>Carro o modelo</span><input id="rfid-car" type="text" placeholder="Toyota Corolla"></label>
                         <label><span>Marca</span><input id="rfid-brand" type="text" placeholder="Toyota"></label>
@@ -221,14 +198,14 @@
                         <label><span>DNI</span><input id="rfid-dni" type="text" maxlength="8" inputmode="numeric" placeholder="45678912"></label>
                         <label><span>Tipo</span><select id="rfid-type"><option value="Sedan">Sedán</option><option value="SUV">SUV</option><option value="Deportivo">Deportivo</option><option value="Hatchback">Hatchback</option><option value="Pickup">Pickup</option><option value="Camioneta">Camioneta / Van</option><option value="Moto">Moto</option></select></label>
                       </div>
-                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta de entrada</button>
+                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir tarjeta</button>
                       <button id="btn-rfid-cancel" class="rfid-cancel-button" type="button" hidden>Cancelar escritura</button>
                       <div id="rfid-write-status" class="write-status" hidden></div>
                     </article>
                     <article class="rfid-card instructions-card">
                       <h3><i class="ti ti-info-circle"></i> Procedimiento</h3>
-                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir en tarjeta de entrada”.</li><li>Acerca la NTAG215 al lector RFID de entrada.</li><li>En funcionamiento, la entrada guarda el ingreso y la salida descuenta el pago.</li></ol>
-                      <p><strong>Importante:</strong> el lector de salida no escribe registros nuevos; solo actualiza el saldo después del cobro.</p>
+                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir tarjeta”.</li><li>Acerca la NTAG215 al lector RFID de pago.</li><li>En funcionamiento, el lector de acceso registra entrada/salida y el lector de pago descuenta el saldo.</li></ol>
+                      <p><strong>Importante:</strong> si el vehículo intenta salir por el lector de acceso sin haber pagado, se genera una incidencia para reportes.</p>
                     </article>
                   </div>
                 </div>

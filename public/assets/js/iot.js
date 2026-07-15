@@ -1,9 +1,59 @@
 import { apiFetch, leerJson } from "./api.js";
 
+const TIPOS_IOT_OCULTOS = new Set([
+  "ESP32-CAM",
+  "OLED",
+  "Puntero laser",
+  "LDR",
+  "Potenciometro"
+]);
+
+const CODIGOS_IOT_OCULTOS = new Set([
+  "SERVO-SALIDA",
+  "OLED-ENTRADA",
+  "OLED-SALIDA",
+  "LDR-SALIDA",
+  "LASER-SALIDA",
+  "ESP32-CAM-01"
+]);
+
 function badge(estado) {
   if (estado === "Online") return "online";
   if (estado === "Advertencia") return "warn";
+  if (estado === "Mantenimiento") return "warn";
   return "offline";
+}
+
+function debeOcultarDispositivo(dispositivo) {
+  return TIPOS_IOT_OCULTOS.has(dispositivo.tipoDispositivo) ||
+    CODIGOS_IOT_OCULTOS.has(dispositivo.codigo);
+}
+
+function calcularResumenVisible(dispositivos) {
+  const resumen = {
+    total: dispositivos.length,
+    online: 0,
+    offline: 0,
+    latencia: 0
+  };
+
+  let lecturasLatencia = 0;
+
+  dispositivos.forEach((dispositivo) => {
+    if (dispositivo.estado === "Online") resumen.online += 1;
+    else resumen.offline += 1;
+
+    if (Number(dispositivo.latenciaMs) > 0) {
+      resumen.latencia += Number(dispositivo.latenciaMs);
+      lecturasLatencia += 1;
+    }
+  });
+
+  resumen.latencia = lecturasLatencia > 0
+    ? Math.round(resumen.latencia / lecturasLatencia)
+    : 0;
+
+  return resumen;
 }
 
 export async function cargarIot() {
@@ -21,14 +71,16 @@ export async function cargarIot() {
   if (!rDispositivos.ok || !dispositivos.ok) throw new Error(dispositivos.mensaje || "No se pudieron cargar dispositivos");
   if (!rLogs.ok || !logs.ok) throw new Error(logs.mensaje || "No se pudieron cargar logs");
 
-  const r = resumen.resumen;
-  document.getElementById("iot-total").textContent = r.totalDispositivos;
-  document.getElementById("iot-online").textContent = r.dispositivosOnline;
-  document.getElementById("iot-offline").textContent = r.dispositivosOffline;
-  document.getElementById("iot-latency").textContent = `${r.latenciaPromedioMs} ms`;
+  const dispositivosVisibles = dispositivos.dispositivos.filter((dispositivo) => !debeOcultarDispositivo(dispositivo));
+  const r = calcularResumenVisible(dispositivosVisibles);
+
+  document.getElementById("iot-total").textContent = r.total;
+  document.getElementById("iot-online").textContent = r.online;
+  document.getElementById("iot-offline").textContent = r.offline;
+  document.getElementById("iot-latency").textContent = `${r.latencia} ms`;
 
   const grid = document.getElementById("devices-grid");
-  grid.innerHTML = dispositivos.dispositivos.length ? dispositivos.dispositivos.map((d) => `
+  grid.innerHTML = dispositivosVisibles.length ? dispositivosVisibles.map((d) => `
     <article class="device-card">
       <div class="device-head"><div><strong>${d.nombre}</strong><span>${d.codigo} · ${d.tipoDispositivo}</span></div><span class="status-badge ${badge(d.estado)}">${d.estado}</span></div>
       <div class="device-meta">

@@ -1,0 +1,4554 @@
+diff --git a/camera_module/firmware/CameraWebServer/CameraWebServer.ino b/camera_module/firmware/CameraWebServer/CameraWebServer.ino
+deleted file mode 100644
+index ee7a1ac..0000000
+--- a/camera_module/firmware/CameraWebServer/CameraWebServer.ino
++++ /dev/null
+@@ -1,369 +0,0 @@
+-#include <WiFi.h>
+-#include <WebSocketsClient.h>
+-#include "esp_camera.h"
+-#include "mbedtls/base64.h"
+-#include "board_config.h"
+-
+-// ============================================================
+-// SMART PARK - ESP32-CAM por WSS directo a Railway
+-// La cámara NO calcula pago ni tiempo.
+-// El tiempo se cuenta con RFID de entrada y RFID de salida.
+-// La cámara solo transmite imagen para ver/calibrar espacios.
+-// ============================================================
+-
+-// ==================== CONFIGURA SOLO ESTO ====================
+-const char* WIFI_SSID     = "TU_WIFI";
+-const char* WIFI_PASSWORD = "TU_PASSWORD_WIFI";
+-
+-// Dominio de Railway SIN https:// y SIN / al final
+-const char* WSS_HOST = "proyecto-final-iot-production.up.railway.app";
+-const uint16_t WSS_PORT = 443;
+-const char* WSS_PATH = "/iot-ws?client=camera";
+-
+-// Cada cuánto manda una imagen al panel. Para exposición va bien 900-1200 ms.
+-const unsigned long FRAME_INTERVAL_MS = 1000;
+-
+-// Flash integrado en ESP32-CAM AI Thinker
+-#define LED_PIN 4
+-
+-WebSocketsClient wsClient;
+-bool wsConectado = false;
+-unsigned long ultimoFrame = 0;
+-unsigned long ultimoStatus = 0;
+-unsigned long contadorFrame = 0;
+-
+-camera_config_t configActual;
+-int calidadJpeg = 14;
+-int brillo = 0;
+-int contraste = 0;
+-int saturacion = 0;
+-int ledNivel = 0;
+-
+-// ==================== HELPERS ====================
+-String jsonEscape(String s) {
+-  s.replace("\\", "\\\\");
+-  s.replace("\"", "\\\"");
+-  s.replace("\n", "\\n");
+-  s.replace("\r", "\\r");
+-  return s;
+-}
+-
+-int extraerEntero(const String& msg, const String& key, int def) {
+-  int idx = msg.indexOf("\"" + key + "\":");
+-  if (idx < 0) return def;
+-  idx += key.length() + 3;
+-  while (idx < (int)msg.length() && (msg[idx] == ' ' || msg[idx] == '\t')) idx++;
+-  return msg.substring(idx).toInt();
+-}
+-
+-String extraerCampo(const String& msg, const String& key) {
+-  int idx = msg.indexOf("\"" + key + "\"");
+-  if (idx < 0) return "";
+-  idx = msg.indexOf(':', idx);
+-  if (idx < 0) return "";
+-  idx++;
+-  while (idx < (int)msg.length() && (msg[idx] == ' ' || msg[idx] == '\t')) idx++;
+-
+-  if (idx < (int)msg.length() && msg[idx] == '\"') {
+-    idx++;
+-    int end = msg.indexOf('\"', idx);
+-    if (end < 0) return "";
+-    return msg.substring(idx, end);
+-  }
+-
+-  int end = idx;
+-  while (end < (int)msg.length() && msg[end] != ',' && msg[end] != '}') end++;
+-  return msg.substring(idx, end);
+-}
+-
+-void enviarWS(const String& json) {
+-  if (wsConectado) {
+-    wsClient.sendTXT(json);
+-  }
+-}
+-
+-String ipLocalTexto() {
+-  return WiFi.localIP().toString();
+-}
+-
+-void enviarStatus(const char* estado) {
+-  String json = "{";
+-  json += "\"type\":\"camera_status\",";
+-  json += "\"status\":\"" + String(estado) + "\",";
+-  json += "\"ip\":\"" + ipLocalTexto() + "\",";
+-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+-  json += "\"quality\":" + String(calidadJpeg) + ",";
+-  json += "\"brightness\":" + String(brillo) + ",";
+-  json += "\"contrast\":" + String(contraste) + ",";
+-  json += "\"saturation\":" + String(saturacion) + ",";
+-  json += "\"led\":" + String(ledNivel) + ",";
+-  json += "\"timestamp\":" + String(millis());
+-  json += "}";
+-  enviarWS(json);
+-}
+-
+-void enviarAck(const String& cmd, const String& msg = "OK") {
+-  String json = "{";
+-  json += "\"type\":\"camera_ack\",";
+-  json += "\"cmd\":\"" + jsonEscape(cmd) + "\",";
+-  json += "\"message\":\"" + jsonEscape(msg) + "\",";
+-  json += "\"timestamp\":" + String(millis());
+-  json += "}";
+-  enviarWS(json);
+-}
+-
+-// ==================== CÁMARA ====================
+-bool iniciarCamara() {
+-  configActual.ledc_channel = LEDC_CHANNEL_0;
+-  configActual.ledc_timer = LEDC_TIMER_0;
+-  configActual.pin_d0 = Y2_GPIO_NUM;
+-  configActual.pin_d1 = Y3_GPIO_NUM;
+-  configActual.pin_d2 = Y4_GPIO_NUM;
+-  configActual.pin_d3 = Y5_GPIO_NUM;
+-  configActual.pin_d4 = Y6_GPIO_NUM;
+-  configActual.pin_d5 = Y7_GPIO_NUM;
+-  configActual.pin_d6 = Y8_GPIO_NUM;
+-  configActual.pin_d7 = Y9_GPIO_NUM;
+-  configActual.pin_xclk = XCLK_GPIO_NUM;
+-  configActual.pin_pclk = PCLK_GPIO_NUM;
+-  configActual.pin_vsync = VSYNC_GPIO_NUM;
+-  configActual.pin_href = HREF_GPIO_NUM;
+-  configActual.pin_sccb_sda = SIOD_GPIO_NUM;
+-  configActual.pin_sccb_scl = SIOC_GPIO_NUM;
+-  configActual.pin_pwdn = PWDN_GPIO_NUM;
+-  configActual.pin_reset = RESET_GPIO_NUM;
+-  configActual.xclk_freq_hz = 20000000;
+-  configActual.pixel_format = PIXFORMAT_JPEG;
+-
+-  if (psramFound()) {
+-    configActual.frame_size = FRAMESIZE_QVGA;     // 320x240, estable para WSS
+-    configActual.jpeg_quality = calidadJpeg;      // menor número = más calidad
+-    configActual.fb_count = 2;
+-    configActual.fb_location = CAMERA_FB_IN_PSRAM;
+-    configActual.grab_mode = CAMERA_GRAB_LATEST;
+-  } else {
+-    configActual.frame_size = FRAMESIZE_QQVGA;    // 160x120 si no hay PSRAM
+-    configActual.jpeg_quality = 16;
+-    configActual.fb_count = 1;
+-    configActual.fb_location = CAMERA_FB_IN_DRAM;
+-    configActual.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+-  }
+-
+-  esp_err_t err = esp_camera_init(&configActual);
+-  if (err != ESP_OK) {
+-    Serial.printf("[CAM] Error al iniciar cámara: 0x%x\n", err);
+-    return false;
+-  }
+-
+-  sensor_t *s = esp_camera_sensor_get();
+-  if (s) {
+-    s->set_vflip(s, 1);
+-    s->set_quality(s, calidadJpeg);
+-    s->set_brightness(s, brillo);
+-    s->set_contrast(s, contraste);
+-    s->set_saturation(s, saturacion);
+-  }
+-
+-  Serial.println("[CAM] Cámara inicializada correctamente");
+-  return true;
+-}
+-
+-void aplicarConfiguracionSensor(const String& param, int value) {
+-  sensor_t *s = esp_camera_sensor_get();
+-  if (!s) return;
+-
+-  if (param == "quality") {
+-    calidadJpeg = constrain(value, 8, 30);
+-    s->set_quality(s, calidadJpeg);
+-    enviarAck("quality", "Calidad JPEG actualizada");
+-  } else if (param == "brightness") {
+-    brillo = constrain(value, -2, 2);
+-    s->set_brightness(s, brillo);
+-    enviarAck("brightness", "Brillo actualizado");
+-  } else if (param == "contrast") {
+-    contraste = constrain(value, -2, 2);
+-    s->set_contrast(s, contraste);
+-    enviarAck("contrast", "Contraste actualizado");
+-  } else if (param == "saturation") {
+-    saturacion = constrain(value, -2, 2);
+-    s->set_saturation(s, saturacion);
+-    enviarAck("saturation", "Saturación actualizada");
+-  }
+-}
+-
+-void reiniciarXclk(int mhz) {
+-  mhz = constrain(mhz, 6, 20);
+-  Serial.printf("[CAM] Reiniciando XCLK a %d MHz\n", mhz);
+-  esp_camera_deinit();
+-  configActual.xclk_freq_hz = mhz * 1000000;
+-  esp_err_t err = esp_camera_init(&configActual);
+-  if (err == ESP_OK) {
+-    sensor_t *s = esp_camera_sensor_get();
+-    if (s) {
+-      s->set_vflip(s, 1);
+-      s->set_quality(s, calidadJpeg);
+-      s->set_brightness(s, brillo);
+-      s->set_contrast(s, contraste);
+-      s->set_saturation(s, saturacion);
+-    }
+-    enviarAck("xclk", "XCLK actualizado");
+-  } else {
+-    enviarAck("xclk", "No se pudo reiniciar la cámara");
+-  }
+-}
+-
+-void enviarFrame() {
+-  if (!wsConectado) return;
+-
+-  camera_fb_t *fb = esp_camera_fb_get();
+-  if (!fb) {
+-    Serial.println("[CAM] Error capturando frame");
+-    enviarAck("frame", "Error capturando imagen");
+-    return;
+-  }
+-
+-  size_t base64Len = 4 * ((fb->len + 2) / 3);
+-  unsigned char *base64Buf = (unsigned char*) malloc(base64Len + 1);
+-
+-  if (!base64Buf) {
+-    Serial.println("[CAM] Sin memoria para base64");
+-    esp_camera_fb_return(fb);
+-    return;
+-  }
+-
+-  size_t encodedLen = 0;
+-  int rc = mbedtls_base64_encode(base64Buf, base64Len + 1, &encodedLen, fb->buf, fb->len);
+-  esp_camera_fb_return(fb);
+-
+-  if (rc != 0) {
+-    Serial.println("[CAM] Error codificando base64");
+-    free(base64Buf);
+-    return;
+-  }
+-
+-  base64Buf[encodedLen] = '\0';
+-  contadorFrame++;
+-
+-  String json;
+-  json.reserve(encodedLen + 260);
+-  json += "{";
+-  json += "\"type\":\"camera_frame\",";
+-  json += "\"contentType\":\"image/jpeg\",";
+-  json += "\"frame\":" + String(contadorFrame) + ",";
+-  json += "\"length\":" + String(encodedLen) + ",";
+-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+-  json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+-  json += "\"timestampMs\":" + String(millis()) + ",";
+-  json += "\"data\":\"";
+-  json += (const char*)base64Buf;
+-  json += "\"}";
+-
+-  wsClient.sendTXT(json);
+-  free(base64Buf);
+-
+-  Serial.printf("[CAM] Frame #%lu enviado (%u bytes base64)\n", contadorFrame, (unsigned)encodedLen);
+-}
+-
+-// ==================== COMANDOS WSS ====================
+-void procesarComando(const String& msg) {
+-  if (msg.indexOf("\"gateway\":true") >= 0) return;
+-  if (msg.indexOf("camera_subscribe") >= 0) {
+-    enviarStatus("online");
+-    return;
+-  }
+-  if (msg.indexOf("camera_cmd") < 0) return;
+-
+-  String cmd = extraerCampo(msg, "cmd");
+-
+-  if (cmd == "led") {
+-    ledNivel = constrain(extraerEntero(msg, "value", 0), 0, 255);
+-    ledcWrite(LED_PIN, ledNivel);
+-    enviarAck("led", "LED actualizado");
+-  } else if (cmd == "config") {
+-    String param = extraerCampo(msg, "param");
+-    int value = extraerEntero(msg, "value", 0);
+-    aplicarConfiguracionSensor(param, value);
+-  } else if (cmd == "xclk") {
+-    int value = extraerEntero(msg, "value", 20);
+-    reiniciarXclk(value);
+-  }
+-}
+-
+-void wsEvent(WStype_t type, uint8_t* payload, size_t length) {
+-  if (type == WStype_CONNECTED) {
+-    wsConectado = true;
+-    Serial.println("[WSS] ESP32-CAM conectada al gateway de Railway");
+-    enviarStatus("online");
+-  } else if (type == WStype_DISCONNECTED) {
+-    wsConectado = false;
+-    Serial.println("[WSS] ESP32-CAM desconectada");
+-  } else if (type == WStype_TEXT) {
+-    String msg = String((char*)payload);
+-    procesarComando(msg);
+-  }
+-}
+-
+-// ==================== SETUP / LOOP ====================
+-void setup() {
+-  Serial.begin(115200);
+-  delay(600);
+-  Serial.println();
+-  Serial.println("============================================");
+-  Serial.println(" SMART PARK - ESP32-CAM WSS RAILWAY");
+-  Serial.println("============================================");
+-
+-  ledcAttach(LED_PIN, 5000, 8);
+-  ledcWrite(LED_PIN, 0);
+-
+-  if (!iniciarCamara()) {
+-    Serial.println("[CAM] Revisa el modelo de cámara en board_config.h");
+-  }
+-
+-  WiFi.mode(WIFI_STA);
+-  WiFi.setSleep(false);
+-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+-
+-  Serial.print("[WiFi] Conectando");
+-  while (WiFi.status() != WL_CONNECTED) {
+-    delay(500);
+-    Serial.print(".");
+-  }
+-
+-  Serial.println();
+-  Serial.print("[WiFi] Conectado a: ");
+-  Serial.println(WIFI_SSID);
+-  Serial.print("[WiFi] IP local: ");
+-  Serial.println(WiFi.localIP());
+-
+-  wsClient.beginSSL(WSS_HOST, WSS_PORT, WSS_PATH);
+-  wsClient.onEvent(wsEvent);
+-  wsClient.setReconnectInterval(5000);
+-  wsClient.enableHeartbeat(15000, 3000, 2);
+-
+-  Serial.print("[WSS] Conectando a wss://");
+-  Serial.print(WSS_HOST);
+-  Serial.println(WSS_PATH);
+-}
+-
+-void loop() {
+-  wsClient.loop();
+-
+-  if (WiFi.status() != WL_CONNECTED) {
+-    wsConectado = false;
+-    WiFi.reconnect();
+-    delay(500);
+-    return;
+-  }
+-
+-  unsigned long ahora = millis();
+-
+-  if (wsConectado && ahora - ultimoFrame >= FRAME_INTERVAL_MS) {
+-    ultimoFrame = ahora;
+-    enviarFrame();
+-  }
+-
+-  if (wsConectado && ahora - ultimoStatus >= 10000) {
+-    ultimoStatus = ahora;
+-    enviarStatus("online");
+-  }
+-}
+diff --git a/camera_module/firmware/CameraWebServer/board_config.h b/camera_module/firmware/CameraWebServer/board_config.h
+deleted file mode 100644
+index 2791886..0000000
+--- a/camera_module/firmware/CameraWebServer/board_config.h
++++ /dev/null
+@@ -1,34 +0,0 @@
+-#ifndef BOARD_CONFIG_H
+-#define BOARD_CONFIG_H
+-
+-//
+-// WARNING!!! PSRAM IC required for UXGA resolution and high JPEG quality
+-//            Ensure ESP32 Wrover Module or other board with PSRAM is selected
+-//            Partial images will be transmitted if image exceeds buffer size
+-//
+-//            You must select partition scheme from the board menu that has at least 3MB APP space.
+-
+-// ===================
+-// Select camera model
+-// ===================
+-//#define CAMERA_MODEL_WROVER_KIT // Has PSRAM
+-//#define CAMERA_MODEL_ESP_EYE  // Has PSRAM
+-//#define CAMERA_MODEL_ESP32S3_EYE // Has PSRAM
+-//#define CAMERA_MODEL_M5STACK_PSRAM // Has PSRAM
+-//#define CAMERA_MODEL_M5STACK_V2_PSRAM // M5Camera version B Has PSRAM
+-//#define CAMERA_MODEL_M5STACK_WIDE // Has PSRAM
+-//#define CAMERA_MODEL_M5STACK_ESP32CAM // No PSRAM
+-//#define CAMERA_MODEL_M5STACK_UNITCAM // No PSRAM
+-//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT  // Has PSRAM
+-#define CAMERA_MODEL_AI_THINKER // Has PSRAM
+-//#define CAMERA_MODEL_TTGO_T_JOURNAL // No PSRAM
+-//#define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
+-// ** Espressif Internal Boards **
+-//#define CAMERA_MODEL_ESP32_CAM_BOARD
+-//#define CAMERA_MODEL_ESP32S2_CAM_BOARD
+-//#define CAMERA_MODEL_ESP32S3_CAM_LCD
+-//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3 // Has PSRAM
+-//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3 // Has PSRAM
+-#include "camera_pins.h"
+-
+-#endif  // BOARD_CONFIG_H
+diff --git a/camera_module/firmware/CameraWebServer/camera_pins.h b/camera_module/firmware/CameraWebServer/camera_pins.h
+deleted file mode 100644
+index 3408508..0000000
+--- a/camera_module/firmware/CameraWebServer/camera_pins.h
++++ /dev/null
+@@ -1,338 +0,0 @@
+-
+-#if defined(CAMERA_MODEL_WROVER_KIT)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  21
+-#define SIOD_GPIO_NUM  26
+-#define SIOC_GPIO_NUM  27
+-
+-#define Y9_GPIO_NUM    35
+-#define Y8_GPIO_NUM    34
+-#define Y7_GPIO_NUM    39
+-#define Y6_GPIO_NUM    36
+-#define Y5_GPIO_NUM    19
+-#define Y4_GPIO_NUM    18
+-#define Y3_GPIO_NUM    5
+-#define Y2_GPIO_NUM    4
+-#define VSYNC_GPIO_NUM 25
+-#define HREF_GPIO_NUM  23
+-#define PCLK_GPIO_NUM  22
+-
+-#elif defined(CAMERA_MODEL_ESP_EYE)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  4
+-#define SIOD_GPIO_NUM  18
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    36
+-#define Y8_GPIO_NUM    37
+-#define Y7_GPIO_NUM    38
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    35
+-#define Y4_GPIO_NUM    14
+-#define Y3_GPIO_NUM    13
+-#define Y2_GPIO_NUM    34
+-#define VSYNC_GPIO_NUM 5
+-#define HREF_GPIO_NUM  27
+-#define PCLK_GPIO_NUM  25
+-
+-#define LED_GPIO_NUM 22
+-
+-#elif defined(CAMERA_MODEL_M5STACK_PSRAM)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  25
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    32
+-#define VSYNC_GPIO_NUM 22
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#elif defined(CAMERA_MODEL_M5STACK_V2_PSRAM)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  22
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    32
+-#define VSYNC_GPIO_NUM 25
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#elif defined(CAMERA_MODEL_M5STACK_WIDE)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  22
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    32
+-#define VSYNC_GPIO_NUM 25
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#define LED_GPIO_NUM 2
+-
+-#elif defined(CAMERA_MODEL_M5STACK_ESP32CAM)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  25
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    17
+-#define VSYNC_GPIO_NUM 22
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#elif defined(CAMERA_MODEL_M5STACK_UNITCAM)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  25
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    32
+-#define VSYNC_GPIO_NUM 22
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#elif defined(CAMERA_MODEL_M5STACK_CAMS3_UNIT)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM 21
+-#define XCLK_GPIO_NUM  11
+-#define SIOD_GPIO_NUM  17
+-#define SIOC_GPIO_NUM  41
+-
+-#define Y9_GPIO_NUM    13
+-#define Y8_GPIO_NUM    4
+-#define Y7_GPIO_NUM    10
+-#define Y6_GPIO_NUM    5
+-#define Y5_GPIO_NUM    7
+-#define Y4_GPIO_NUM    16
+-#define Y3_GPIO_NUM    15
+-#define Y2_GPIO_NUM    6
+-#define VSYNC_GPIO_NUM 42
+-#define HREF_GPIO_NUM  18
+-#define PCLK_GPIO_NUM  12
+-
+-#define LED_GPIO_NUM 14
+-
+-#elif defined(CAMERA_MODEL_AI_THINKER)
+-#define PWDN_GPIO_NUM  32
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  0
+-#define SIOD_GPIO_NUM  26
+-#define SIOC_GPIO_NUM  27
+-
+-#define Y9_GPIO_NUM    35
+-#define Y8_GPIO_NUM    34
+-#define Y7_GPIO_NUM    39
+-#define Y6_GPIO_NUM    36
+-#define Y5_GPIO_NUM    21
+-#define Y4_GPIO_NUM    19
+-#define Y3_GPIO_NUM    18
+-#define Y2_GPIO_NUM    5
+-#define VSYNC_GPIO_NUM 25
+-#define HREF_GPIO_NUM  23
+-#define PCLK_GPIO_NUM  22
+-
+-// 4 for flash led or 33 for normal led
+-#define LED_GPIO_NUM   4
+-
+-#elif defined(CAMERA_MODEL_TTGO_T_JOURNAL)
+-#define PWDN_GPIO_NUM  0
+-#define RESET_GPIO_NUM 15
+-#define XCLK_GPIO_NUM  27
+-#define SIOD_GPIO_NUM  25
+-#define SIOC_GPIO_NUM  23
+-
+-#define Y9_GPIO_NUM    19
+-#define Y8_GPIO_NUM    36
+-#define Y7_GPIO_NUM    18
+-#define Y6_GPIO_NUM    39
+-#define Y5_GPIO_NUM    5
+-#define Y4_GPIO_NUM    34
+-#define Y3_GPIO_NUM    35
+-#define Y2_GPIO_NUM    17
+-#define VSYNC_GPIO_NUM 22
+-#define HREF_GPIO_NUM  26
+-#define PCLK_GPIO_NUM  21
+-
+-#elif defined(CAMERA_MODEL_XIAO_ESP32S3)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  10
+-#define SIOD_GPIO_NUM  40
+-#define SIOC_GPIO_NUM  39
+-
+-#define Y9_GPIO_NUM    48
+-#define Y8_GPIO_NUM    11
+-#define Y7_GPIO_NUM    12
+-#define Y6_GPIO_NUM    14
+-#define Y5_GPIO_NUM    16
+-#define Y4_GPIO_NUM    18
+-#define Y3_GPIO_NUM    17
+-#define Y2_GPIO_NUM    15
+-#define VSYNC_GPIO_NUM 38
+-#define HREF_GPIO_NUM  47
+-#define PCLK_GPIO_NUM  13
+-
+-#elif defined(CAMERA_MODEL_ESP32_CAM_BOARD)
+-// The 18 pin header on the board has Y5 and Y3 swapped
+-#define USE_BOARD_HEADER 0
+-#define PWDN_GPIO_NUM    32
+-#define RESET_GPIO_NUM   33
+-#define XCLK_GPIO_NUM    4
+-#define SIOD_GPIO_NUM    18
+-#define SIOC_GPIO_NUM    23
+-
+-#define Y9_GPIO_NUM 36
+-#define Y8_GPIO_NUM 19
+-#define Y7_GPIO_NUM 21
+-#define Y6_GPIO_NUM 39
+-#if USE_BOARD_HEADER
+-#define Y5_GPIO_NUM 13
+-#else
+-#define Y5_GPIO_NUM 35
+-#endif
+-#define Y4_GPIO_NUM 14
+-#if USE_BOARD_HEADER
+-#define Y3_GPIO_NUM 35
+-#else
+-#define Y3_GPIO_NUM 13
+-#endif
+-#define Y2_GPIO_NUM    34
+-#define VSYNC_GPIO_NUM 5
+-#define HREF_GPIO_NUM  27
+-#define PCLK_GPIO_NUM  25
+-
+-#elif defined(CAMERA_MODEL_ESP32S3_CAM_LCD)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  40
+-#define SIOD_GPIO_NUM  17
+-#define SIOC_GPIO_NUM  18
+-
+-#define Y9_GPIO_NUM    39
+-#define Y8_GPIO_NUM    41
+-#define Y7_GPIO_NUM    42
+-#define Y6_GPIO_NUM    12
+-#define Y5_GPIO_NUM    3
+-#define Y4_GPIO_NUM    14
+-#define Y3_GPIO_NUM    47
+-#define Y2_GPIO_NUM    13
+-#define VSYNC_GPIO_NUM 21
+-#define HREF_GPIO_NUM  38
+-#define PCLK_GPIO_NUM  11
+-
+-#elif defined(CAMERA_MODEL_ESP32S2_CAM_BOARD)
+-// The 18 pin header on the board has Y5 and Y3 swapped
+-#define USE_BOARD_HEADER 0
+-#define PWDN_GPIO_NUM    1
+-#define RESET_GPIO_NUM   2
+-#define XCLK_GPIO_NUM    42
+-#define SIOD_GPIO_NUM    41
+-#define SIOC_GPIO_NUM    18
+-
+-#define Y9_GPIO_NUM 16
+-#define Y8_GPIO_NUM 39
+-#define Y7_GPIO_NUM 40
+-#define Y6_GPIO_NUM 15
+-#if USE_BOARD_HEADER
+-#define Y5_GPIO_NUM 12
+-#else
+-#define Y5_GPIO_NUM 13
+-#endif
+-#define Y4_GPIO_NUM 5
+-#if USE_BOARD_HEADER
+-#define Y3_GPIO_NUM 13
+-#else
+-#define Y3_GPIO_NUM 12
+-#endif
+-#define Y2_GPIO_NUM    14
+-#define VSYNC_GPIO_NUM 38
+-#define HREF_GPIO_NUM  4
+-#define PCLK_GPIO_NUM  3
+-
+-#elif defined(CAMERA_MODEL_ESP32S3_EYE)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  15
+-#define SIOD_GPIO_NUM  4
+-#define SIOC_GPIO_NUM  5
+-
+-#define Y2_GPIO_NUM 11
+-#define Y3_GPIO_NUM 9
+-#define Y4_GPIO_NUM 8
+-#define Y5_GPIO_NUM 10
+-#define Y6_GPIO_NUM 12
+-#define Y7_GPIO_NUM 18
+-#define Y8_GPIO_NUM 17
+-#define Y9_GPIO_NUM 16
+-
+-#define VSYNC_GPIO_NUM 6
+-#define HREF_GPIO_NUM  7
+-#define PCLK_GPIO_NUM  13
+-
+-#elif defined(CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3) || defined(CAMERA_MODEL_DFRobot_Romeo_ESP32S3)
+-#define PWDN_GPIO_NUM  -1
+-#define RESET_GPIO_NUM -1
+-#define XCLK_GPIO_NUM  45
+-#define SIOD_GPIO_NUM  1
+-#define SIOC_GPIO_NUM  2
+-
+-#define Y9_GPIO_NUM    48
+-#define Y8_GPIO_NUM    46
+-#define Y7_GPIO_NUM    8
+-#define Y6_GPIO_NUM    7
+-#define Y5_GPIO_NUM    4
+-#define Y4_GPIO_NUM    41
+-#define Y3_GPIO_NUM    40
+-#define Y2_GPIO_NUM    39
+-#define VSYNC_GPIO_NUM 6
+-#define HREF_GPIO_NUM  42
+-#define PCLK_GPIO_NUM  5
+-
+-#else
+-#error "Camera model not selected"
+-#endif
+diff --git a/camera_module/servidor/Procfile b/camera_module/servidor/Procfile
+deleted file mode 100644
+index ac9d762..0000000
+--- a/camera_module/servidor/Procfile
++++ /dev/null
+@@ -1 +0,0 @@
+-web: python server.py
+diff --git a/camera_module/servidor/requirements.txt b/camera_module/servidor/requirements.txt
+deleted file mode 100644
+index a1175de..0000000
+--- a/camera_module/servidor/requirements.txt
++++ /dev/null
+@@ -1,6 +0,0 @@
+-flask
+-flask-cors
+-requests
+-pillow
+-numpy
+-opencv-python-headless
+diff --git a/camera_module/servidor/server.py b/camera_module/servidor/server.py
+deleted file mode 100644
+index 779a057..0000000
+--- a/camera_module/servidor/server.py
++++ /dev/null
+@@ -1,292 +0,0 @@
+-import time
+-import json
+-import threading
+-from io import BytesIO
+-from flask import Flask, request, jsonify, Response
+-from flask_cors import CORS
+-import requests
+-from PIL import Image
+-import numpy as np
+-import cv2
+-
+-import os
+-
+-# La IP de la ESP32-CAM se puede fijar aqui como valor por defecto, o pasarla
+-# como variable de entorno ESP32_IP al desplegar (ej: en Railway > Variables).
+-ESP32_IP = os.environ.get("ESP32_IP", "10.252.41.118")
+-CAPTURE_URL = os.environ.get("ESP32_CAPTURE_URL", f"http://{ESP32_IP}/capture")
+-camera_lock = threading.Lock()
+-ARCHIVO_ZONAS = "zonas.json"
+-
+-sensibilidad_lock = threading.Lock()
+-sensibilidad = {
+-    "umbral_brillo": 20.0,
+-    "umbral_bordes": 0.02,
+-    "canny_bajo": 20,
+-    "canny_alto": 80,
+-}
+-
+-TIEMPO_CONFIRMACION_SEG = 1.5
+-INTERVALO_LECTURA = 0.4
+-
+-app = Flask(__name__)
+-CORS(app)
+-
+-estado_lock = threading.Lock()
+-zonas = []
+-clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+-
+-def cargar_zonas():
+-    global zonas
+-    try:
+-        with open(ARCHIVO_ZONAS, "r") as f:
+-            zonas = json.load(f)
+-    except FileNotFoundError:
+-        zonas = []
+-    for z in zonas:
+-        z.setdefault("referencia", None)
+-        z.setdefault("referencia_bordes", None)
+-        z.setdefault("ocupada", False)
+-        z.setdefault("cambio_desde", None)
+-
+-def guardar_zonas():
+-    with open(ARCHIVO_ZONAS, "w") as f:
+-        json.dump(zonas, f, indent=2)
+-
+-def limpiar_url_camara(valor):
+-    valor = (valor or "").strip()
+-    if not valor:
+-        return ""
+-    if not valor.startswith(("http://", "https://")):
+-        valor = "http://" + valor
+-    valor = valor.rstrip("/")
+-    if not valor.endswith("/capture"):
+-        valor += "/capture"
+-    return valor
+-
+-def fijar_url_camara(valor):
+-    global CAPTURE_URL, ESP32_IP
+-    nueva = limpiar_url_camara(valor)
+-    if not nueva:
+-        return CAPTURE_URL
+-    with camera_lock:
+-        CAPTURE_URL = nueva
+-        ESP32_IP = nueva.replace("http://", "").replace("https://", "").split("/")[0]
+-        return CAPTURE_URL
+-
+-def obtener_foto_bytes():
+-    with camera_lock:
+-        url = CAPTURE_URL
+-    r = requests.get(url, timeout=3)
+-    r.raise_for_status()
+-    return r.content
+-
+-def obtener_foto_gris():
+-    img = Image.open(BytesIO(obtener_foto_bytes())).convert("L")
+-    return np.array(img)
+-
+-def calcular_metricas(arr, puntos):
+-    with sensibilidad_lock:
+-        canny_bajo = sensibilidad["canny_bajo"]
+-        canny_alto = sensibilidad["canny_alto"]
+-
+-    pts = np.array(puntos, dtype=np.int32)
+-    x0, y0 = pts[:, 0].min(), pts[:, 1].min()
+-    x1, y1 = pts[:, 0].max(), pts[:, 1].max()
+-    x0, y0 = max(0, x0), max(0, y0)
+-    x1, y1 = min(arr.shape[1], x1), min(arr.shape[0], y1)
+-
+-    if x1 <= x0 or y1 <= y0:
+-        return 0, 0
+-
+-    mascara = np.zeros(arr.shape, dtype=np.uint8)
+-    cv2.fillPoly(mascara, [pts], 255)
+-
+-    recorte = arr[y0:y1, x0:x1]
+-    mascara_recorte = mascara[y0:y1, x0:x1]
+-
+-    pixeles_validos = recorte[mascara_recorte == 255]
+-    if pixeles_validos.size == 0:
+-        return 0, 0
+-
+-    brillo = float(pixeles_validos.mean())
+-
+-    recorte_mejorado = clahe.apply(recorte)
+-    recorte_suave = cv2.GaussianBlur(recorte_mejorado, (3, 3), 0)
+-    bordes = cv2.Canny(recorte_suave, canny_bajo, canny_alto)
+-    bordes_validos = bordes[mascara_recorte == 255]
+-    densidad_bordes = float((bordes_validos > 0).mean())
+-
+-    return brillo, densidad_bordes
+-
+-def loop_deteccion():
+-    while True:
+-        try:
+-            arr = obtener_foto_gris()
+-            ahora = time.time()
+-            with sensibilidad_lock:
+-                umbral_brillo = sensibilidad["umbral_brillo"]
+-                umbral_bordes = sensibilidad["umbral_bordes"]
+-            with estado_lock:
+-                for z in zonas:
+-                    if not z["puntos"]:
+-                        continue
+-
+-                    brillo, bordes = calcular_metricas(arr, z["puntos"])
+-
+-                    if z["referencia"] is None:
+-                        z["referencia"] = brillo
+-                    if z["referencia_bordes"] is None:
+-                        z["referencia_bordes"] = bordes
+-
+-                    dif_brillo = abs(brillo - z["referencia"])
+-                    dif_bordes = abs(bordes - z["referencia_bordes"])
+-
+-                    ocupado_ahora = (dif_brillo > umbral_brillo) or (dif_bordes > umbral_bordes)
+-
+-                    if ocupado_ahora != z["ocupada"]:
+-                        if z["cambio_desde"] is None:
+-                            z["cambio_desde"] = ahora
+-                        elif ahora - z["cambio_desde"] >= TIEMPO_CONFIRMACION_SEG:
+-                            z["ocupada"] = ocupado_ahora
+-                            z["cambio_desde"] = None
+-                            print(f"[{z['nombre']}] -> {'OCUPADO' if ocupado_ahora else 'LIBRE'} "
+-                                  f"(brillo={brillo:.1f} dif={dif_brillo:.1f}, bordes={bordes:.3f} dif={dif_bordes:.3f})")
+-                    else:
+-                        z["cambio_desde"] = None
+-        except Exception as e:
+-            print("Error en loop de deteccion:", e)
+-        time.sleep(INTERVALO_LECTURA)
+-
+-@app.route("/api/camara", methods=["GET", "POST"])
+-def api_camara():
+-    if request.method == "POST":
+-        datos = request.json or {}
+-        valor = datos.get("capture_url") or datos.get("ip") or datos.get("url")
+-        fijar_url_camara(valor)
+-    with camera_lock:
+-        return jsonify({"ok": True, "capture_url": CAPTURE_URL, "ip": ESP32_IP})
+-
+-@app.route("/api/captura", methods=["GET"])
+-def api_captura():
+-    try:
+-        foto = obtener_foto_bytes()
+-        return Response(foto, mimetype="image/jpeg")
+-    except Exception as e:
+-        return jsonify({"ok": False, "error": str(e)}), 503
+-
+-@app.route("/api/estado", methods=["GET"])
+-def api_estado():
+-    with estado_lock:
+-        return jsonify([{"zona": z["nombre"], "ocupado": z["ocupada"]} for z in zonas])
+-
+-@app.route("/api/zonas", methods=["GET"])
+-def api_get_zonas():
+-    with estado_lock:
+-        return jsonify(zonas)
+-
+-@app.route("/api/zonas", methods=["POST"])
+-def api_set_zonas():
+-    global zonas
+-    nuevas = request.json
+-    with estado_lock:
+-        for nz in nuevas:
+-            nz.setdefault("referencia", None)
+-            nz.setdefault("referencia_bordes", None)
+-            nz.setdefault("ocupada", False)
+-            nz.setdefault("cambio_desde", None)
+-        zonas = nuevas
+-        guardar_zonas()
+-    return jsonify({"ok": True})
+-
+-@app.route("/api/recalibrar", methods=["POST"])
+-def api_recalibrar():
+-    try:
+-        arr = obtener_foto_gris()
+-        with estado_lock:
+-            for z in zonas:
+-                if z["puntos"]:
+-                    brillo, bordes = calcular_metricas(arr, z["puntos"])
+-                    z["referencia"] = brillo
+-                    z["referencia_bordes"] = bordes
+-        return jsonify({"ok": True})
+-    except Exception as e:
+-        return jsonify({"ok": False, "error": str(e)}), 500
+-
+-@app.route("/api/sensibilidad", methods=["GET"])
+-def api_get_sensibilidad():
+-    with sensibilidad_lock:
+-        return jsonify(sensibilidad)
+-
+-@app.route("/api/sensibilidad", methods=["POST"])
+-def api_set_sensibilidad():
+-    datos = request.json
+-    with sensibilidad_lock:
+-        for clave in ["umbral_brillo", "umbral_bordes", "canny_bajo", "canny_alto"]:
+-            if clave in datos:
+-                sensibilidad[clave] = float(datos[clave]) if clave in ("umbral_brillo", "umbral_bordes") else int(float(datos[clave]))
+-    return jsonify({"ok": True, "sensibilidad": sensibilidad})
+-
+-@app.route("/debug/<nombre_zona>")
+-def debug_zona(nombre_zona):
+-    try:
+-        arr = obtener_foto_gris()
+-        with estado_lock:
+-            zona = next((z for z in zonas if z["nombre"] == nombre_zona), None)
+-        if zona is None:
+-            return "Zona no encontrada", 404
+-
+-        with sensibilidad_lock:
+-            canny_bajo = sensibilidad["canny_bajo"]
+-            canny_alto = sensibilidad["canny_alto"]
+-
+-        pts = np.array(zona["puntos"], dtype=np.int32)
+-        x0, y0 = max(0, int(pts[:, 0].min())), max(0, int(pts[:, 1].min()))
+-        x1, y1 = min(arr.shape[1], int(pts[:, 0].max())), min(arr.shape[0], int(pts[:, 1].max()))
+-
+-        recorte = arr[y0:y1, x0:x1]
+-        mascara = np.zeros(arr.shape, dtype=np.uint8)
+-        cv2.fillPoly(mascara, [pts], 255)
+-        mascara_recorte = mascara[y0:y1, x0:x1]
+-
+-        recorte_mejorado = clahe.apply(recorte)
+-        recorte_suave = cv2.GaussianBlur(recorte_mejorado, (3, 3), 0)
+-        bordes = cv2.Canny(recorte_suave, canny_bajo, canny_alto)
+-
+-        factor = 4
+-        recorte_grande = cv2.resize(recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
+-        mejorado_grande = cv2.resize(recorte_mejorado, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
+-        bordes_grande = cv2.resize(bordes, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
+-        mascara_grande = cv2.resize(mascara_recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_NEAREST)
+-
+-        recorte_color = cv2.cvtColor(recorte_grande, cv2.COLOR_GRAY2BGR)
+-        con_mascara = cv2.cvtColor(mejorado_grande, cv2.COLOR_GRAY2BGR)
+-        con_mascara[mascara_grande == 0] = con_mascara[mascara_grande == 0] // 4
+-
+-        bordes_color = cv2.cvtColor(bordes_grande, cv2.COLOR_GRAY2BGR)
+-        bordes_color[bordes_grande > 0] = [0, 255, 0]
+-
+-        def con_etiqueta(img, texto):
+-            salida = img.copy()
+-            cv2.putText(salida, texto, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1, cv2.LINE_AA)
+-            return salida
+-
+-        recorte_color = con_etiqueta(recorte_color, "Original")
+-        con_mascara = con_etiqueta(con_mascara, "Mascara + contraste")
+-        bordes_color = con_etiqueta(bordes_color, "Bordes detectados")
+-
+-        ancho = recorte_color.shape[1]
+-        separador = np.full((6, ancho, 3), 40, dtype=np.uint8)
+-        composicion = np.vstack([recorte_color, separador, con_mascara, separador, bordes_color])
+-
+-        ok, buf = cv2.imencode(".png", composicion)
+-        return Response(buf.tobytes(), mimetype="image/png")
+-    except Exception as e:
+-        return str(e), 500
+-
+-if __name__ == "__main__":
+-    cargar_zonas()
+-    hilo = threading.Thread(target=loop_deteccion, daemon=True)
+-    hilo.start()
+-    puerto = int(os.environ.get("PORT", 5000))
+-    app.run(host="0.0.0.0", port=puerto, debug=False)
+\ No newline at end of file
+diff --git a/camera_module/servidor/zonas.example.json b/camera_module/servidor/zonas.example.json
+deleted file mode 100644
+index b01b549..0000000
+--- a/camera_module/servidor/zonas.example.json
++++ /dev/null
+@@ -1,27 +0,0 @@
+-[
+-  {
+-    "nombre": "1",
+-    "puntos": [
+-      [
+-        139.8000030517578,
+-        85.75
+-      ],
+-      [
+-        114.80000305175781,
+-        299.75
+-      ],
+-      [
+-        443.8000030517578,
+-        322.75
+-      ],
+-      [
+-        464.8000030517578,
+-        110.75
+-      ]
+-    ],
+-    "ocupada": false,
+-    "referencia": null,
+-    "referencia_bordes": null,
+-    "cambio_desde": null
+-  }
+-]
+\ No newline at end of file
+diff --git a/public/admin.html b/public/admin.html
+index 68dfcb3..c4c0857 100644
+--- a/public/admin.html
++++ b/public/admin.html
+@@ -7,7 +7,6 @@
+ <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+ <link rel="stylesheet" href="/assets/css/admin.css">
+-<link rel="stylesheet" href="/assets/css/camera-monitor.css">
+ </head>
+ <body>
+ <div id="app">
+@@ -106,7 +105,6 @@
+     <div class="sidebar-section-title">Principal</div>
+     <div class="nav-item active" onclick="navigateTo('dashboard',this)"><i class="fa-solid fa-table-cells-large"></i><span class="nav-label">Dashboard</span></div>
+     <div class="nav-item" onclick="navigateTo('sensors',this)"><i class="fa-solid fa-microchip"></i><span class="nav-label">Sensores en Vivo</span></div>
+-    <div class="nav-item" onclick="navigateTo('monitor',this)"><i class="fa-solid fa-camera"></i><span class="nav-label">Monitoreo en Tiempo Real</span></div>
+     <div class="nav-item" onclick="navigateTo('vehicles',this)"><i class="fa-solid fa-car"></i><span class="nav-label">Vehículos</span></div>
+     <div class="nav-item" onclick="navigateTo('history',this)"><i class="fa-solid fa-chart-line"></i><span class="nav-label">Historial y Reportes</span></div>
+     <div class="sidebar-section-title">Configuración</div>
+@@ -231,7 +229,7 @@
+         <div class="integrated-view-heading">
+           <div>
+             <h2><i class="fa-solid fa-microchip" style="color:var(--accent);margin-right:7px"></i>Sensores y actuadores en vivo</h2>
+-            <p>WebSocket del ESP32, servomotores, láser, LDR, potenciómetro, RFID y registros MySQL.</p>
++            <p>WebSocket del ESP32, servomotor único, RFID de acceso, RFID de pago y registros MySQL.</p>
+           </div>
+         </div>
+         <div class="integrated-frame-shell" id="sensors-frame-shell">
+@@ -247,271 +245,6 @@
+       </section>
+     </div>
+ 
+-    <!-- ======== PAGE: MONITOR ======== -->
+-    <div class="page" id="page-monitor">
+-      <div class="section-hd" style="margin-bottom:16px">
+-        <div>
+-          <div class="section-title">Monitoreo en Tiempo Real</div>
+-          <div class="section-sub">
+-            Vista operativa ·
+-            <span id="monitor-system-status" style="color:var(--text-muted)">Verificando sistema...</span>
+-          </div>
+-        </div>
+-
+-        <button
+-          class="btn btn-secondary btn-sm"
+-          id="monitor-capture-btn"
+-          onclick="capturarCamaraMonitor()"
+-          disabled
+-          title="La captura estará disponible cuando se conecte la cámara"
+-        >
+-          <i class="fa-solid fa-camera"></i>
+-          Captura no disponible
+-        </button>
+-      </div>
+-
+-      <div class="monitor-note-card">
+-        <i class="fa-solid fa-circle-info" style="color:var(--accent);margin-right:6px"></i>
+-        El tiempo dentro del estacionamiento se calcula desde que la tarjeta RFID ingresa por la barrera de entrada hasta que sale por la barrera de salida. La cámara solo detecta qué espacio está ocupado durante ese periodo.
+-      </div>
+-
+-      <div class="camera-mode-card">
+-        <div class="camera-mode-info">
+-          <div class="camera-mode-icon"><i class="fa-solid fa-camera-retro"></i></div>
+-          <div>
+-            <div class="camera-mode-title">Modo de la cámara</div>
+-            <div class="camera-mode-sub" id="cam-mode-switch-sub">Modo prueba — calibración de zonas habilitada</div>
+-          </div>
+-        </div>
+-        <div class="camera-mode-toggle" id="cam-mode-switch-toggle">
+-          <button type="button" id="cam-mode-btn-prueba" onclick="setCamMode('prueba')">
+-            <i class="fa-solid fa-screwdriver-wrench"></i> Prueba
+-          </button>
+-          <button type="button" id="cam-mode-btn-funcionamiento" onclick="setCamMode('funcionamiento')">
+-            <i class="fa-solid fa-play"></i> Funcionamiento
+-          </button>
+-        </div>
+-      </div>
+-
+-      <div class="camera-mode-banner prueba" id="cam-mode-banner">
+-        <i class="fa-solid fa-circle-info"></i>
+-        Modo prueba activo: calibra las zonas sobre la imagen de la cámara.
+-      </div>
+-
+-      <div class="vehicle-panel camera-monitor-layout">
+-        <div class="camera-feed camera-feed-vision">
+-          <div class="camera-top">
+-            <span class="cam-rec" id="monitor-camera-rec">
+-              <span class="dot"></span>
+-              SIN SEÑAL
+-            </span>
+-
+-            <div id="monitor-camera-name" style="font-size:13px;font-weight:600">
+-              ESP32-CAM de monitoreo
+-            </div>
+-
+-            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+-              <span class="cam-conn-badge offline" id="cam-conn-badge">
+-                <span class="dot"></span>Sin conectar
+-              </span>
+-              <span class="badge badge-gray" id="monitor-camera-status">Sin conexión</span>
+-              <span id="monitor-camera-address" style="font-size:11px;color:var(--text-muted)">Sin dirección</span>
+-              <button class="btn-cam-icon" id="btn-cam-settings" onclick="abrirModalCamSettings()" title="Ajustes de cámara">
+-                <i class="fa-solid fa-gear"></i>
+-              </button>
+-            </div>
+-          </div>
+-
+-          <div class="cam-toolbar">
+-            <button class="btn-cam" id="btn-cam-nueva-zona" onclick="toggleModoNuevaZona()">
+-              <i class="fa-solid fa-vector-square"></i> Nueva zona
+-            </button>
+-            <button class="btn-cam" id="btn-cam-recalibrar" onclick="recalibrarZonas()">
+-              <i class="fa-solid fa-crosshairs"></i> Recalibrar vacío
+-            </button>
+-            <button class="btn-cam" id="btn-cam-guardar" onclick="guardarZonasCam()">
+-              <i class="fa-solid fa-floppy-disk"></i> Guardar zonas
+-            </button>
+-            <button class="btn-cam danger" id="btn-cam-borrar" onclick="camBorrarTodasLasZonas()">
+-              <i class="fa-solid fa-trash"></i> Borrar zonas
+-            </button>
+-            <span class="cam-toolbar-hint" id="cam-toolbar-hint">Conecta la cámara para empezar</span>
+-          </div>
+-
+-          <div class="camera-live camera-live-vision" id="monitor-camera-view">
+-            <img id="cam-live-img" class="cam-live-img" alt="Vista ESP32-CAM">
+-            <canvas id="cam-overlay-canvas" class="cam-overlay-canvas"></canvas>
+-            <div class="cam-empty-state" id="cam-empty-state">
+-              <i class="fa-solid fa-video-slash"></i>
+-              <strong>Transmisión no disponible</strong>
+-              <span>La ESP32-CAM se conecta por WSS al mismo Railway.</span>
+-            </div>
+-            <div class="cam-status-bar">
+-              <span><span class="live-dot"></span>LIVE</span>
+-              <span id="cam-detectados">Detectados: 0 / 10</span>
+-              <span id="cam-ts">Esperando lectura</span>
+-            </div>
+-          </div>
+-
+-          <div class="cam-metrics-row">
+-            <div>
+-              <div class="cam-metric-label">Vehículos activos</div>
+-              <div class="cam-metric-value accent" id="monitor-detected-count">0 activos</div>
+-            </div>
+-            <div>
+-              <div class="cam-metric-label">Espacios ocupados</div>
+-              <div class="cam-metric-value red" id="cam-stat-ocupados">0</div>
+-            </div>
+-            <div>
+-              <div class="cam-metric-label">Espacios libres</div>
+-              <div class="cam-metric-value green" id="cam-stat-libres">10</div>
+-            </div>
+-            <div>
+-              <div class="cam-metric-label">Latencia</div>
+-              <div class="cam-metric-value" id="monitor-camera-latency">Sin dato</div>
+-            </div>
+-            <div>
+-              <div class="cam-metric-label">Última lectura</div>
+-              <div class="cam-metric-value" id="monitor-camera-last">Sin registro</div>
+-            </div>
+-            <div style="display:none">
+-              <div class="cam-metric-label">Estado del dispositivo</div>
+-              <div class="cam-metric-value" id="monitor-camera-device-state">Sin conexión</div>
+-            </div>
+-          </div>
+-
+-          <div class="cam-sens-bar">
+-            <div class="cam-sens-item" title="Umbral de brillo">
+-              <label>Brillo</label>
+-              <input type="range" min="5" max="60" value="20" id="cfg-sens-brillo" oninput="camSetSensibilidad('umbral_brillo',this.value)">
+-              <span id="cfg-sens-brillo-val">20</span>
+-            </div>
+-            <div class="cam-sens-item" title="Umbral de bordes">
+-              <label>Bordes</label>
+-              <input type="range" min="0.005" max="0.1" step="0.005" value="0.02" id="cfg-sens-bordes" oninput="camSetSensibilidad('umbral_bordes',this.value)">
+-              <span id="cfg-sens-bordes-val">0.02</span>
+-            </div>
+-            <div class="cam-sens-item" title="Canny — umbral bajo">
+-              <label>Canny↓</label>
+-              <input type="range" min="5" max="100" value="20" id="cfg-sens-canny-bajo" oninput="camSetSensibilidad('canny_bajo',this.value)">
+-              <span id="cfg-sens-canny-bajo-val">20</span>
+-            </div>
+-            <div class="cam-sens-item" title="Canny — umbral alto">
+-              <label>Canny↑</label>
+-              <input type="range" min="20" max="200" value="80" id="cfg-sens-canny-alto" oninput="camSetSensibilidad('canny_alto',this.value)">
+-              <span id="cfg-sens-canny-alto-val">80</span>
+-            </div>
+-          </div>
+-        </div>
+-
+-        <div class="vehicles-list camera-side">
+-          <div class="v-list-hd">
+-            <div style="font-size:13px;font-weight:600">Vehículos en Estacionamiento</div>
+-            <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="v-feed-count">0 activos · actualizado ahora</div>
+-          </div>
+-
+-          <div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:10px 12px">
+-            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:4px">Espacios · Vista por cámara</div>
+-            <div id="cam-spaces-sub" style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">0 ocupados · 10 libres</div>
+-            <div id="monitor-parking-strip" style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px"></div>
+-          </div>
+-
+-          <div class="cam-debug-panel">
+-            <div class="cam-debug-label">
+-              <i class="fa-solid fa-magnifying-glass-chart"></i>
+-              Depurar zona
+-              <span class="cam-debug-zona-tag" id="cam-debug-zona-tag" style="display:none"></span>
+-            </div>
+-            <div class="cam-debug-imgwrap" id="cam-debug-imgwrap">
+-              <div class="cam-debug-empty">Selecciona un espacio para ver la detección en detalle.</div>
+-            </div>
+-          </div>
+-
+-          <div class="v-list-body" id="vehicles-feed" style="border-top:none"></div>
+-        </div>
+-      </div>
+-    </div>
+-
+-    <!-- MODAL: AJUSTES DE CÁMARA -->
+-    <div class="modal-overlay" id="modal-cam-settings">
+-      <div class="modal">
+-        <div class="modal-hd">
+-          <span class="modal-title"><i class="fa-solid fa-gear" style="color:var(--accent);margin-right:6px"></i>Ajustes de cámara</span>
+-          <div class="modal-close" onclick="cerrarModalCamSettings()"><i class="fa-solid fa-xmark"></i></div>
+-        </div>
+-        <div class="modal-body">
+-          <div class="modal-section-label">Conexión WSS directa</div>
+-          <div class="modal-field-row">
+-            <div class="modal-field">
+-              <label>Dominio Railway usado por la ESP32-CAM</label>
+-              <input type="text" id="cfg-ip-camara" placeholder="proyecto-final-iot-production.up.railway.app" readonly>
+-            </div>
+-            <div class="modal-field">
+-              <label>WebSocket de cámara</label>
+-              <input type="text" id="cfg-ip-servidor" placeholder="wss://tu-proyecto.up.railway.app/iot-ws?client=panel&camera=1">
+-            </div>
+-          </div>
+-          <div class="camera-wss-help">La ESP32-CAM no necesita IP pública ni servidor Python. Solo debe cargar el firmware WSS, conectarse al WiFi y apuntar al mismo dominio de Railway.</div>
+-          <button class="btn-cam full" onclick="conectarCamara()">
+-            <i class="fa-solid fa-plug-circle-check"></i> Conectar visor WSS
+-          </button>
+-
+-          <div class="modal-section-label" style="margin-top:18px">Controles rápidos de ESP32-CAM</div>
+-          <div class="modal-slider-row">
+-            <label>LED flash</label>
+-            <input type="range" min="0" max="255" value="0" id="cfg-led" oninput="camSetLed(this.value)">
+-            <span id="cfg-led-val">0</span>
+-          </div>
+-          <div class="modal-slider-row">
+-            <label>Calidad JPEG</label>
+-            <input type="range" min="8" max="30" value="14" id="cfg-quality" oninput="camSetConfig('quality',this.value)">
+-            <span id="cfg-quality-val">14</span>
+-          </div>
+-          <div class="modal-slider-row">
+-            <label>Brillo</label>
+-            <input type="range" min="-2" max="2" value="0" id="cfg-brightness" oninput="camSetConfig('brightness',this.value)">
+-            <span id="cfg-brightness-val">0</span>
+-          </div>
+-          <div class="modal-slider-row">
+-            <label>Contraste</label>
+-            <input type="range" min="-2" max="2" value="0" id="cfg-contrast" oninput="camSetConfig('contrast',this.value)">
+-            <span id="cfg-contrast-val">0</span>
+-          </div>
+-          <div class="modal-slider-row">
+-            <label>Saturación</label>
+-            <input type="range" min="-2" max="2" value="0" id="cfg-saturation" oninput="camSetConfig('saturation',this.value)">
+-            <span id="cfg-saturation-val">0</span>
+-          </div>
+-          <div class="modal-slider-row">
+-            <label>XCLK MHz</label>
+-            <input type="range" min="6" max="20" value="20" id="cfg-xclk" oninput="camSetXclk(this.value)">
+-            <span id="cfg-xclk-val">20</span>
+-          </div>
+-        </div>
+-      </div>
+-    </div>
+-
+-    <!-- MODAL: ASIGNAR / EDITAR ZONA -->
+-    <div class="modal-overlay" id="modal-zona">
+-      <div class="modal" style="max-width:420px">
+-        <div class="modal-hd">
+-          <span class="modal-title"><i class="fa-solid fa-square-parking" style="color:var(--accent);margin-right:6px"></i>Espacio de estacionamiento</span>
+-          <div class="modal-close" onclick="cerrarModalZona()"><i class="fa-solid fa-xmark"></i></div>
+-        </div>
+-        <div class="modal-body">
+-          <div class="modal-field" id="zona-estado-actual" style="font-size:12px;color:var(--text-secondary);margin-bottom:14px"></div>
+-          <div class="modal-field">
+-            <label>Número de espacio asignado</label>
+-            <input type="text" id="zona-numero-input" placeholder="Ej: 1, 2, 3...">
+-          </div>
+-          <div class="modal-btn-row">
+-            <button class="btn-cam danger" onclick="eliminarZonaActual()"><i class="fa-solid fa-trash"></i> Eliminar zona</button>
+-            <button class="btn-cam primario" onclick="guardarNumeroZona()"><i class="fa-solid fa-check"></i> Guardar</button>
+-          </div>
+-        </div>
+-      </div>
+-    </div>
+-
+     <!-- ======== PAGE: VEHICLES ======== -->
+     <div class="page" id="page-vehicles">
+       <div class="section-hd" style="margin-bottom:16px">
+@@ -612,6 +345,36 @@
+         </table>
+         </div>
+       </div>
++      <div class="table-container" style="margin-top:14px">
++        <div class="table-header">
++          <div>
++            <div class="table-title">Incidencias de Acceso</div>
++            <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
++              Registros generados cuando un vehículo intenta salir sin pago, intenta ingresar dos veces o presenta saldo insuficiente.
++            </div>
++          </div>
++          <div class="table-actions">
++            <span class="badge badge-purple" id="incidencias-count">0 incidencias</span>
++          </div>
++        </div>
++        <div style="overflow-x:auto">
++          <table>
++            <thead>
++              <tr>
++                <th>Fecha</th>
++                <th>Hora</th>
++                <th>Tipo</th>
++                <th>Placa / UID</th>
++                <th>Detalle</th>
++                <th>Origen</th>
++              </tr>
++            </thead>
++            <tbody id="incidencias-tbody">
++              <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">Cargando incidencias…</td></tr>
++            </tbody>
++          </table>
++        </div>
++      </div>
+     </div>
+ 
+     <!-- ======== PAGE: TARIFFS ======== -->
+@@ -1868,7 +1631,6 @@
+ <div id="toast-container"></div>
+ 
+ <script src="/assets/js/admin.js"></script>
+-<script src="/assets/js/camera-monitor.js"></script>
+ </div><!-- /app -->
+ </body>
+ </html>
+diff --git a/public/assets/css/camera-monitor.css b/public/assets/css/camera-monitor.css
+deleted file mode 100644
+index 09847be..0000000
+--- a/public/assets/css/camera-monitor.css
++++ /dev/null
+@@ -1,512 +0,0 @@
+-/* ============================================================
+-   Monitor ESP32-CAM / detección de espacios
+-   ============================================================ */
+-.camera-monitor-layout {
+-  display: grid;
+-  grid-template-columns: minmax(0, 1fr) 310px;
+-  gap: 16px;
+-  height: calc(100vh - var(--header-h) - 138px);
+-  min-height: 640px;
+-}
+-
+-.camera-mode-card,
+-.monitor-note-card {
+-  background: var(--bg-card);
+-  border: 1px solid var(--border);
+-  border-radius: var(--radius-md);
+-  padding: 12px 14px;
+-  margin-bottom: 12px;
+-}
+-
+-.camera-mode-card {
+-  display: flex;
+-  align-items: center;
+-  justify-content: space-between;
+-  gap: 12px;
+-}
+-
+-.camera-mode-info {
+-  display: flex;
+-  align-items: center;
+-  gap: 10px;
+-}
+-
+-.camera-mode-icon {
+-  width: 38px;
+-  height: 38px;
+-  border-radius: 10px;
+-  display: grid;
+-  place-items: center;
+-  background: var(--purple-bg);
+-  color: var(--purple);
+-  font-size: 16px;
+-}
+-
+-.camera-mode-title {
+-  font-weight: 700;
+-  font-size: 13px;
+-}
+-
+-.camera-mode-sub,
+-.monitor-note-card {
+-  font-size: 11px;
+-  color: var(--text-secondary);
+-  line-height: 1.5;
+-}
+-
+-.camera-mode-toggle {
+-  display: flex;
+-  gap: 6px;
+-  background: var(--bg-tertiary);
+-  border: 1px solid var(--border);
+-  border-radius: 999px;
+-  padding: 4px;
+-}
+-
+-.camera-mode-toggle button {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-  border-radius: 999px;
+-  padding: 8px 12px;
+-  color: var(--text-secondary);
+-  font-size: 11px;
+-  font-weight: 700;
+-  transition: background var(--transition), color var(--transition);
+-}
+-
+-.camera-mode-toggle button.active {
+-  background: var(--accent);
+-  color: #fff;
+-}
+-
+-.camera-mode-banner {
+-  margin-bottom: 12px;
+-  border: 1px solid var(--border);
+-  border-radius: var(--radius-md);
+-  padding: 10px 12px;
+-  font-size: 12px;
+-  display: flex;
+-  align-items: center;
+-  gap: 8px;
+-}
+-
+-.camera-mode-banner.prueba {
+-  color: var(--amber);
+-  background: var(--amber-bg);
+-  border-color: rgba(245, 158, 11, 0.35);
+-}
+-
+-.camera-mode-banner.funcionamiento {
+-  color: var(--green);
+-  background: var(--green-bg);
+-  border-color: rgba(34, 197, 94, 0.35);
+-}
+-
+-.camera-feed-vision {
+-  min-width: 0;
+-}
+-
+-.cam-conn-badge {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-  font-size: 11px;
+-  font-weight: 700;
+-  border-radius: 999px;
+-  border: 1px solid var(--border);
+-  padding: 4px 8px;
+-  color: var(--text-secondary);
+-}
+-
+-.cam-conn-badge .dot {
+-  width: 7px;
+-  height: 7px;
+-  border-radius: 50%;
+-  background: currentColor;
+-}
+-
+-.cam-conn-badge.online { color: var(--green); background: var(--green-bg); border-color: rgba(34, 197, 94, .35); }
+-.cam-conn-badge.offline { color: var(--red); background: var(--red-bg); border-color: rgba(239, 68, 68, .35); }
+-.cam-conn-badge.connecting { color: var(--amber); background: var(--amber-bg); border-color: rgba(245, 158, 11, .35); }
+-
+-.cam-rec.online .dot { background: var(--green); }
+-
+-.cam-toolbar {
+-  display: flex;
+-  align-items: center;
+-  flex-wrap: wrap;
+-  gap: 8px;
+-  padding: 10px 14px;
+-  border-bottom: 1px solid var(--border);
+-  background: color-mix(in srgb, var(--bg-card) 86%, var(--bg-tertiary));
+-}
+-
+-.btn-cam {
+-  display: inline-flex;
+-  align-items: center;
+-  justify-content: center;
+-  gap: 6px;
+-  padding: 7px 10px;
+-  border-radius: var(--radius-sm);
+-  border: 1px solid var(--border);
+-  background: var(--bg-tertiary);
+-  color: var(--text-secondary);
+-  font-size: 11px;
+-  font-weight: 700;
+-  transition: all var(--transition);
+-}
+-
+-.btn-cam:hover,
+-.btn-cam.active {
+-  color: var(--accent);
+-  border-color: var(--accent);
+-  background: var(--accent-glow);
+-}
+-
+-.btn-cam.danger:hover {
+-  color: var(--red);
+-  border-color: var(--red);
+-  background: var(--red-bg);
+-}
+-
+-.btn-cam.primario,
+-.btn-cam.full {
+-  background: var(--accent);
+-  color: #fff;
+-  border-color: var(--accent);
+-}
+-
+-.btn-cam.full {
+-  width: 100%;
+-  margin-top: 10px;
+-  padding: 10px 12px;
+-}
+-
+-.btn-cam-icon {
+-  width: 30px;
+-  height: 30px;
+-  border-radius: var(--radius-sm);
+-  display: grid;
+-  place-items: center;
+-  border: 1px solid var(--border);
+-  color: var(--text-secondary);
+-  background: var(--bg-tertiary);
+-}
+-
+-.btn-cam-icon:hover {
+-  color: var(--accent);
+-  border-color: var(--accent);
+-}
+-
+-.cam-toolbar-hint {
+-  margin-left: auto;
+-  font-size: 11px;
+-  color: var(--text-muted);
+-}
+-
+-.camera-live-vision {
+-  min-height: 420px;
+-  overflow: hidden;
+-  background: #05070c;
+-}
+-
+-.cam-live-img {
+-  max-width: 100%;
+-  max-height: 100%;
+-  display: block;
+-  object-fit: contain;
+-}
+-
+-.cam-overlay-canvas {
+-  position: absolute;
+-  cursor: crosshair;
+-  z-index: 3;
+-}
+-
+-.cam-empty-state {
+-  position: absolute;
+-  inset: 0;
+-  z-index: 2;
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  flex-direction: column;
+-  gap: 8px;
+-  text-align: center;
+-  color: var(--text-muted);
+-  background: #05070c;
+-}
+-
+-.cam-empty-state i {
+-  font-size: 40px;
+-  opacity: .55;
+-}
+-
+-.cam-empty-state strong {
+-  color: var(--text-secondary);
+-  font-size: 14px;
+-}
+-
+-.cam-status-bar {
+-  position: absolute;
+-  left: 0;
+-  right: 0;
+-  bottom: 0;
+-  z-index: 4;
+-  display: flex;
+-  justify-content: space-between;
+-  gap: 10px;
+-  padding: 6px 10px;
+-  background: rgba(0, 0, 0, .68);
+-  color: rgba(255, 255, 255, .72);
+-  font-size: 10px;
+-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+-}
+-
+-.cam-metrics-row {
+-  padding: 12px 16px;
+-  border-top: 1px solid var(--border);
+-  display: grid;
+-  grid-template-columns: repeat(5, minmax(110px, 1fr));
+-  gap: 10px;
+-}
+-
+-.cam-metric-label {
+-  font-size: 10px;
+-  color: var(--text-muted);
+-  font-weight: 700;
+-  text-transform: uppercase;
+-  letter-spacing: .05em;
+-  margin-bottom: 3px;
+-}
+-
+-.cam-metric-value {
+-  font-size: 16px;
+-  font-weight: 800;
+-}
+-
+-.cam-metric-value.accent { color: var(--accent); }
+-.cam-metric-value.green { color: var(--green); }
+-.cam-metric-value.red { color: var(--red); }
+-
+-.cam-sens-bar {
+-  display: grid;
+-  grid-template-columns: repeat(4, minmax(0, 1fr));
+-  gap: 10px;
+-  padding: 12px 14px;
+-  border-top: 1px solid var(--border);
+-  background: var(--bg-tertiary);
+-}
+-
+-.cam-sens-item {
+-  display: flex;
+-  align-items: center;
+-  gap: 7px;
+-  min-width: 0;
+-  font-size: 10.5px;
+-}
+-
+-.cam-sens-item label {
+-  color: var(--text-secondary);
+-  white-space: nowrap;
+-  font-weight: 700;
+-}
+-
+-.cam-sens-item input[type="range"] {
+-  min-width: 0;
+-  flex: 1;
+-  accent-color: var(--accent);
+-}
+-
+-.cam-sens-item span {
+-  width: 32px;
+-  text-align: right;
+-  color: var(--accent);
+-  font-variant-numeric: tabular-nums;
+-}
+-
+-.camera-side {
+-  width: 310px;
+-}
+-
+-.cam-space-mini {
+-  position: relative;
+-  height: 34px !important;
+-  font-size: 11px !important;
+-}
+-
+-.cam-space-mini i {
+-  position: absolute;
+-  right: 5px;
+-  top: 4px;
+-  font-size: 9px;
+-  opacity: .7;
+-}
+-
+-.cam-space-mini.not-calibrated i {
+-  color: var(--amber);
+-}
+-
+-.cam-space-mini.selected {
+-  box-shadow: 0 0 0 2px var(--accent);
+-}
+-
+-.cam-debug-panel {
+-  background: var(--bg-card);
+-  border-left: 1px solid var(--border);
+-  border-right: 1px solid var(--border);
+-  padding: 10px 12px;
+-}
+-
+-.cam-debug-label {
+-  display: flex;
+-  align-items: center;
+-  gap: 6px;
+-  font-size: 10px;
+-  font-weight: 800;
+-  letter-spacing: .05em;
+-  text-transform: uppercase;
+-  color: var(--text-muted);
+-  margin-bottom: 8px;
+-}
+-
+-.cam-debug-zona-tag {
+-  padding: 2px 7px;
+-  border-radius: 999px;
+-  background: var(--accent-glow);
+-  color: var(--accent);
+-  font-size: 10px;
+-}
+-
+-.cam-debug-imgwrap {
+-  min-height: 120px;
+-  border: 1px solid var(--border);
+-  border-radius: var(--radius-sm);
+-  background: #000;
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  overflow: hidden;
+-}
+-
+-.cam-debug-imgwrap img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  image-rendering: pixelated;
+-}
+-
+-.cam-debug-empty {
+-  padding: 16px 12px;
+-  text-align: center;
+-  font-size: 11px;
+-  color: var(--text-muted);
+-  line-height: 1.45;
+-}
+-
+-.modal-field-row {
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 12px;
+-}
+-
+-.modal-field {
+-  margin-bottom: 12px;
+-}
+-
+-.modal-field label,
+-.modal-slider-row label,
+-.modal-section-label {
+-  display: block;
+-  font-size: 10px;
+-  color: var(--text-muted);
+-  text-transform: uppercase;
+-  letter-spacing: .05em;
+-  font-weight: 800;
+-  margin-bottom: 6px;
+-}
+-
+-.modal-field input {
+-  width: 100%;
+-  padding: 9px 10px;
+-}
+-
+-.modal-slider-row {
+-  display: grid;
+-  grid-template-columns: 110px 1fr 38px;
+-  align-items: center;
+-  gap: 8px;
+-  margin-bottom: 10px;
+-}
+-
+-.modal-slider-row input[type="range"] {
+-  accent-color: var(--accent);
+-}
+-
+-.modal-slider-row span {
+-  color: var(--accent);
+-  font-variant-numeric: tabular-nums;
+-  text-align: right;
+-}
+-
+-.modal-section-label {
+-  margin-top: 6px;
+-  color: var(--accent);
+-}
+-
+-.modal-btn-row {
+-  display: flex;
+-  justify-content: flex-end;
+-  gap: 8px;
+-  margin-top: 14px;
+-}
+-
+-body.cam-locked .cam-toolbar .btn-cam:not(#btn-cam-settings),
+-body.cam-locked #btn-cam-nueva-zona,
+-body.cam-locked #btn-cam-guardar,
+-body.cam-locked #btn-cam-recalibrar,
+-body.cam-locked #btn-cam-borrar,
+-body.cam-locked .cam-sens-bar input {
+-  opacity: .55;
+-  pointer-events: none;
+-}
+-
+-[data-theme="light"] .camera-live-vision,
+-[data-theme="light"] .cam-empty-state,
+-[data-theme="light"] .cam-debug-imgwrap {
+-  background: #f8fafc;
+-}
+-
+-[data-theme="light"] .cam-status-bar {
+-  background: rgba(15, 23, 42, .82);
+-}
+-
+-@media (max-width: 1200px) {
+-  .camera-monitor-layout { grid-template-columns: 1fr; height: auto; }
+-  .camera-side { width: 100%; }
+-  .cam-metrics-row { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+-}
+-
+-@media (max-width: 720px) {
+-  .camera-mode-card,
+-  .modal-field-row { grid-template-columns: 1fr; display: grid; }
+-  .camera-mode-toggle { width: 100%; justify-content: space-between; }
+-  .cam-sens-bar { grid-template-columns: 1fr; }
+-  .modal-slider-row { grid-template-columns: 1fr; }
+-}
+-
+-.camera-wss-help{
+-  margin:8px 0 12px;
+-  padding:10px 12px;
+-  border:1px solid var(--border);
+-  border-radius:12px;
+-  background:rgba(79,142,247,.08);
+-  color:var(--text-secondary);
+-  font-size:12px;
+-  line-height:1.45;
+-}
+-
+-body.cam-locked .camera-wss-help{
+-  opacity:.85;
+-}
+diff --git a/public/assets/css/sensors-live.css b/public/assets/css/sensors-live.css
+index d2b271e..cef7c1c 100644
+--- a/public/assets/css/sensors-live.css
++++ b/public/assets/css/sensors-live.css
+@@ -1,2 +1,29 @@
+ /* Integración de sensores en vivo — mantiene los estilos generales de main.css */
+ .sensor-page-wrap{max-width:1480px;margin:0 auto;padding:20px 24px 28px}.esp32-toolbar{display:grid;grid-template-columns:minmax(230px,1fr) minmax(230px,1.1fr) minmax(260px,1.35fr) auto auto;gap:10px;align-items:end;padding:14px 16px;margin-bottom:18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg)}.esp32-indicator{display:flex;align-items:center;gap:10px;min-height:42px}.esp32-indicator strong{display:block;font-size:12px}.esp32-indicator small{display:block;margin-top:2px;color:var(--muted);font-size:10px}.esp32-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}.esp32-indicator.connecting .esp32-dot{background:var(--warn);animation:blink .8s infinite}.esp32-indicator.connecting strong{color:var(--warn)}.esp32-indicator.connected .esp32-dot{background:var(--green);animation:blink 1.8s infinite}.esp32-indicator.connected strong{color:var(--green)}.esp32-indicator.offline .esp32-dot{background:var(--red)}.esp32-indicator.offline strong{color:var(--red)}.sensor-config-field{display:flex;flex-direction:column;gap:5px}.sensor-config-field>span{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.45px;text-transform:uppercase}.sensor-config-field input,.write-grid input,.write-grid select{width:100%;height:38px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 10px;outline:none}.sensor-config-field input:focus,.write-grid input:focus,.write-grid select:focus{border-color:var(--accent)}.sensor-action-button{height:38px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--sub);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;font-size:11px;font-weight:700}.sensor-action-button:hover{border-color:var(--accent);color:var(--accent)}.sensor-action-button.primary{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}.live-sensors-layout{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:18px;align-items:start}.live-sensors-main{display:flex;flex-direction:column;gap:14px}.sensor-side-column{display:flex;flex-direction:column;gap:18px;position:sticky;top:122px}.mode-switch-card{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:14px 17px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}.mode-switch-info{display:flex;align-items:center;gap:10px}.mode-switch-info strong{display:block;font-size:13px}.mode-switch-info small{display:block;color:var(--muted);font-size:10px;margin-top:2px}.mode-switch-icon{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--purple-dim);color:var(--purple)}.mode-switch-toggle{display:flex;gap:3px;padding:3px;border:1px solid var(--border);border-radius:999px;background:var(--bg)}.mode-switch-toggle button{height:34px;padding:0 14px;border:1px solid transparent;border-radius:999px;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;font-weight:700;display:flex;align-items:center;gap:5px}.mode-switch-toggle .active-test{background:var(--warn-dim);border-color:var(--warn);color:var(--warn)}.mode-switch-toggle .active-live{background:var(--green-dim);border-color:var(--green);color:var(--green)}.mode-banner{display:flex;align-items:center;gap:8px;padding:9px 13px;border:1px solid;border-radius:9px;font-size:11px;font-weight:650}.mode-banner.test{background:var(--warn-dim);border-color:var(--warn);color:var(--warn)}.mode-banner.live{background:var(--green-dim);border-color:var(--green);color:var(--green)}.sensor-page-wrap.manual-locked .manual-control{pointer-events:none;opacity:.38;filter:grayscale(.35)}.sensor-top-row{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:14px}.sensor-clock-card{min-height:138px;padding:20px 22px;border:1px solid var(--border);border-radius:var(--radius-lg);background:#06080d;display:flex;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;position:relative}.sensor-clock-card:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 50%,rgba(79,142,247,.13),transparent 52%),radial-gradient(circle at 85% 50%,rgba(34,201,122,.08),transparent 48%);pointer-events:none}.sensor-clock-card>div{position:relative;z-index:1}.sensor-eyebrow{display:block;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.65px;margin-bottom:8px}.sensor-clock-card>div:first-child>strong{display:block;font:700 clamp(30px,4vw,43px)/1 "Courier New",monospace;color:#fff;letter-spacing:2px;text-shadow:0 0 20px rgba(79,142,247,.4)}.sensor-clock-card>div:first-child>small{display:block;margin-top:7px;color:var(--muted);font-family:monospace}.clock-speed-info{text-align:right;min-width:145px}.clock-speed-info>span,.clock-speed-info>small{display:block;color:var(--muted);font-size:10px}.clock-speed-info>strong{display:block;margin:5px 0 2px;color:var(--accent);font-size:24px;font-family:monospace}.speed-track{height:4px;margin-top:8px;background:var(--border);border-radius:5px;overflow:hidden}.speed-track span{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}.pwm-widget{padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px}.pwm-title{align-self:flex-start;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase}.gpio-tag{display:inline-flex;align-items:center;border:1px solid rgba(79,142,247,.35);border-radius:5px;background:var(--accent-dim);color:var(--accent);padding:2px 6px;font-size:9px;font-style:normal;font-family:monospace}.pwm-gauge-wrap{width:112px;height:70px;position:relative}.pwm-gauge-wrap svg{width:112px;height:70px}.gauge-bg,.gauge-fill{fill:none;stroke-width:8;stroke-linecap:round}.gauge-bg{stroke:var(--border)}.gauge-fill{stroke:var(--accent);transition:stroke-dashoffset .35s,stroke .35s}.pwm-gauge-wrap strong{position:absolute;left:50%;bottom:0;transform:translateX(-50%);font-size:18px;font-family:monospace}.pwm-widget>small{text-align:center;color:var(--muted);font-size:10px;line-height:1.45}.sensor-group-card{padding:18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}.sensor-group-title{display:flex;align-items:center;gap:7px;margin-bottom:14px;color:var(--sub);font-size:13px;font-weight:700}.sensor-group-title i{color:var(--accent)}.barrier-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.servo-card,.mini-sensor-card,.rfid-card{background:var(--bg);border:1px solid var(--border);border-radius:13px}.servo-card{padding:14px;display:flex;flex-direction:column;align-items:center;gap:9px}.servo-heading{width:100%;display:flex;align-items:center;justify-content:center;gap:8px}.servo-heading strong{font-size:13px}.servo-state{padding:2px 7px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:9px;font-weight:800}.servo-state.open{background:var(--green-dim);border-color:var(--green);color:var(--green)}.servo-state.closed{background:var(--red-dim);border-color:var(--red);color:var(--red)}.servo-gauge-wrap{width:110px;height:84px}.servo-gauge-wrap svg{width:110px;height:84px}.servo-gauge-bg,.servo-gauge-value{fill:none;stroke-width:9;stroke-linecap:round}.servo-gauge-bg{stroke:var(--border)}.servo-gauge-value{stroke:var(--red);transition:stroke-dashoffset .45s,stroke .45s}.servo-gauge-wrap text{fill:var(--text);font:700 19px "Segoe UI",sans-serif}.servo-button,.laser-button,.rfid-write-button,.rfid-cancel-button{width:100%;min-height:36px;border-radius:8px;border:1px solid;cursor:pointer;font-size:11px;font-weight:750;display:flex;align-items:center;justify-content:center;gap:6px}.servo-button{background:var(--green-dim);border-color:var(--green);color:var(--green)}.servo-button.close{background:var(--red-dim);border-color:var(--red);color:var(--red)}.center-sensors{display:flex;flex-direction:column;gap:9px}.mini-sensor-card{min-height:73px;padding:10px 12px;display:flex;align-items:center;gap:10px}.mini-sensor-icon{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;flex:none}.mini-sensor-icon.laser{background:var(--red-dim);color:var(--red)}.mini-sensor-icon.ldr{background:var(--warn-dim);color:var(--warn)}.mini-sensor-card>div:nth-child(2){flex:1}.mini-sensor-card span:not(.sensor-pill):not(.gpio-tag){display:block;color:var(--muted);font-size:9px;text-transform:uppercase;font-weight:700}.mini-sensor-card strong{display:block;margin:2px 0;color:var(--sub);font-size:14px}.mini-sensor-card small{display:block;color:var(--muted);font-size:9.5px}.mini-sensor-card .gpio-tag{margin-top:4px}.sensor-pill{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}.sensor-pill.on{background:var(--red);animation:blink 1.3s infinite}.sensor-pill.ok{background:var(--green);animation:blink 1.8s infinite}.sensor-pill.off{background:var(--muted)}.laser-button{background:var(--green-dim);border-color:var(--green);color:var(--green)}.laser-button.on{background:var(--red-dim);border-color:var(--red);color:var(--red)}.rfid-tabs{display:flex;gap:4px;padding:4px;margin-bottom:13px;border:1px solid var(--border);border-radius:9px;background:var(--bg)}.rfid-tab{flex:1;min-height:34px;border:0;border-radius:7px;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;font-weight:750}.rfid-tab.active{background:var(--purple-dim);color:var(--purple)}.rfid-page{display:none}.rfid-page.active{display:block}.rfid-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.rfid-card{padding:15px}.rfid-header{display:flex;align-items:center;gap:9px;margin-bottom:12px}.rfid-header strong,.rfid-header span{display:block}.rfid-header strong{font-size:12px}.rfid-header span{font-size:10px;color:var(--muted);margin-top:2px}.rfid-icon{width:38px;height:38px;border-radius:9px;background:var(--purple-dim);color:var(--purple);display:grid;place-items:center;font-size:19px}.gpio-list{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:11px}.gpio-list span{padding:2px 5px;border:1px solid rgba(79,142,247,.3);border-radius:4px;background:var(--accent-dim);color:var(--accent);font:9px monospace}.rfid-connection{display:flex;align-items:center;gap:7px;padding:8px;border:1px solid var(--border);border-radius:7px;background:var(--card);font-size:10px;color:var(--sub)}.rfid-card>p{margin-top:10px;color:var(--muted);font-size:10px;line-height:1.5}.rfid-card h3{display:flex;align-items:center;gap:6px;margin-bottom:11px;color:var(--sub);font-size:11px;text-transform:uppercase;letter-spacing:.35px}.rfid-empty{min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--muted)}.rfid-empty i{font-size:28px;opacity:.45}.rfid-empty span{margin-top:5px;font-size:12px}.rfid-empty small{margin-top:3px;font-size:9px}.rfid-data-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:10px}.rfid-data-row:last-child{border-bottom:0}.rfid-data-row span:first-child{color:var(--muted)}.rfid-data-row strong{color:var(--text);font-family:monospace;text-align:right;word-break:break-word}.rfid-data-row strong.uid{color:var(--purple)}.write-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.write-grid label{display:flex;flex-direction:column;gap:4px}.write-grid label.full{grid-column:1/-1}.write-grid label>span{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase}.write-grid input,.write-grid select{height:36px;font-size:11px}.rfid-write-button{margin-top:12px;background:var(--purple-dim);border-color:var(--purple);color:var(--purple)}.rfid-cancel-button{margin-top:7px;background:transparent;border-color:var(--border);color:var(--muted)}.write-status{margin-top:9px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;color:var(--sub);font-size:10px;line-height:1.4}.write-status.info{background:var(--warn-dim);border-color:var(--warn);color:var(--warn)}.write-status.success{background:var(--green-dim);border-color:var(--green);color:var(--green)}.write-status.error{background:var(--red-dim);border-color:var(--red);color:var(--red)}.instructions-card ol{padding-left:18px;color:var(--sub);font-size:11px;line-height:1.7}.instructions-card p strong{color:var(--warn)}.mysql-iot-section{display:flex;flex-direction:column;gap:12px;margin-top:2px}.sensor-log-panel{overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card)}.sensor-log-panel>header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:13px 14px;border-bottom:1px solid var(--border)}.sensor-log-panel h2{display:flex;align-items:center;gap:6px;font-size:12px}.sensor-log-panel h2 i{color:var(--accent)}.sensor-log-panel p{margin-top:3px;color:var(--muted);font-size:9px}.sensor-log-panel header>div:last-child{display:flex;gap:5px}.log-tool{height:28px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:9px}.log-tool.active{border-color:var(--accent);color:var(--accent)}.sensor-live-log{height:390px;overflow:auto;padding:6px 0}.sensor-log-empty{padding:30px 15px;text-align:center;color:var(--muted);font-size:10px}.sensor-log-entry{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:6px;align-items:baseline;padding:5px 10px;border-left:2px solid transparent}.sensor-log-entry.info{border-left-color:var(--accent)}.sensor-log-entry.ok{border-left-color:var(--green)}.sensor-log-entry.warn{border-left-color:var(--warn)}.sensor-log-entry.error{border-left-color:var(--red)}.sensor-log-entry time{color:var(--muted);font:9px monospace}.sensor-log-entry b{padding:1px 4px;border-radius:3px;font-size:8px;letter-spacing:.3px}.sensor-log-entry.info b{background:var(--accent-dim);color:var(--accent)}.sensor-log-entry.ok b{background:var(--green-dim);color:var(--green)}.sensor-log-entry.warn b{background:var(--warn-dim);color:var(--warn)}.sensor-log-entry.error b{background:var(--red-dim);color:var(--red)}.sensor-log-entry span{min-width:0;color:var(--sub);font:10px/1.45 monospace;overflow-wrap:anywhere}.mysql-log-panel{padding:14px}.mysql-log-panel .iot-logs{max-height:280px}.camera-stream{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;background:#000}.camera-panel.has-stream .camera-grid,.camera-panel.has-stream .camera-empty{display:none}.camera-panel.has-stream .camera-stream{display:block}.camera-panel .camera-footer{z-index:3}.camera-panel.stream-error .camera-empty{display:flex}.camera-panel.stream-error .camera-stream{display:none}.neutral{color:var(--sub)}@media(max-width:1250px){.esp32-toolbar{grid-template-columns:1fr 1fr auto}.esp32-indicator{grid-column:1/-1}.camera-url-field{grid-column:1/2}.live-sensors-layout{grid-template-columns:minmax(0,1fr) 320px}}@media(max-width:1050px){.live-sensors-layout{grid-template-columns:1fr}.sensor-side-column{position:static;display:grid;grid-template-columns:1fr 1fr}.sensor-live-log{height:320px}.barrier-grid{grid-template-columns:1fr 1fr}.center-sensors{grid-column:1/-1;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}.mysql-log-panel .iot-logs{max-height:320px}}@media(max-width:760px){.sensor-page-wrap{padding:14px}.esp32-toolbar{grid-template-columns:1fr}.esp32-indicator,.camera-url-field{grid-column:auto}.sensor-action-button{width:100%}.sensor-top-row{grid-template-columns:1fr}.sensor-clock-card{flex-direction:column;align-items:flex-start}.clock-speed-info{text-align:left;width:100%}.barrier-grid,.rfid-grid,.sensor-side-column{grid-template-columns:1fr}.center-sensors{grid-column:auto;display:flex}.mode-switch-card{align-items:flex-start;flex-direction:column}.mode-switch-toggle{width:100%}.mode-switch-toggle button{flex:1;justify-content:center}.write-grid{grid-template-columns:1fr}.write-grid label.full{grid-column:auto}}@media(max-width:520px){.sensor-clock-card>div:first-child>strong{font-size:30px}.barrier-grid{grid-template-columns:1fr}.iot-stats{grid-template-columns:1fr 1fr}.esp32-toolbar{padding:12px}.sensor-group-card{padding:13px}}
++
++/* Ajuste final: hardware actualizado sin cámara, sin potenciómetro, sin láser/LDR y con una sola barrera */
++.esp32-toolbar{grid-template-columns:minmax(230px,1fr) minmax(280px,1.4fr) auto}
++.sensor-top-row{grid-template-columns:minmax(0,1fr) 220px}
++.sensor-clock-card{background:var(--card);color:var(--text)}
++.sensor-clock-card>div:first-child>strong{color:var(--text);text-shadow:none}
++.clock-speed-info{text-align:left}
++.clock-speed-info .sim-date-input{width:100%;height:36px;margin:5px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 10px;outline:none}
++.clock-speed-info .sim-date-input:focus{border-color:var(--accent)}
++.operation-rate-widget{padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:7px}
++.operation-rate-widget strong{font-size:26px;color:var(--accent);font-family:monospace}
++.operation-rate-widget small{color:var(--muted);font-size:10px;line-height:1.45}
++.single-barrier-grid{grid-template-columns:260px minmax(0,1fr) minmax(0,1fr);align-items:stretch}
++.access-servo-card{min-height:205px}
++.access-rule-card{background:var(--bg);border:1px solid var(--border);border-radius:13px;padding:16px;display:flex;align-items:flex-start;gap:12px;color:var(--sub)}
++.access-rule-card i{width:36px;height:36px;border-radius:9px;background:var(--accent-dim);color:var(--accent);display:grid;place-items:center;font-size:20px;flex:none}
++.access-rule-card strong{display:block;color:var(--text);font-size:13px;margin-bottom:6px}
++.access-rule-card p{margin:0;color:var(--muted);font-size:11px;line-height:1.55}
++:root[data-theme="light"] .sensor-clock-card,
++body[data-theme="light"] .sensor-clock-card{background:var(--card);border-color:var(--border)}
++:root[data-theme="light"] .sensor-clock-card:before,
++body[data-theme="light"] .sensor-clock-card:before{background:radial-gradient(circle at 20% 50%,rgba(79,142,247,.10),transparent 52%),radial-gradient(circle at 85% 50%,rgba(34,201,122,.08),transparent 48%)}
++:root[data-theme="light"] .sensor-clock-card>div:first-child>strong,
++body[data-theme="light"] .sensor-clock-card>div:first-child>strong{color:var(--text)}
++@media(max-width:1250px){.esp32-toolbar{grid-template-columns:1fr 1fr auto}.esp32-indicator{grid-column:1/-1}}
++@media(max-width:1050px){.single-barrier-grid{grid-template-columns:1fr}.sensor-top-row{grid-template-columns:1fr}}
++@media(max-width:760px){.esp32-toolbar{grid-template-columns:1fr}.single-barrier-grid{grid-template-columns:1fr}}
+diff --git a/public/assets/js/admin.js b/public/assets/js/admin.js
+index c68f893..fe56742 100644
+--- a/public/assets/js/admin.js
++++ b/public/assets/js/admin.js
+@@ -11,6 +11,24 @@ let EVENTS_DATA = [];
+ let IOT_DEVICES = [];
+ 
+ let IOT_LOGS = [];
++let INCIDENCIAS_DATA = [];
++
++const TIPOS_IOT_OCULTOS = new Set([
++  "ESP32-CAM",
++  "OLED",
++  "Puntero laser",
++  "LDR",
++  "Potenciometro"
++]);
++
++const CODIGOS_IOT_OCULTOS = new Set([
++  "SERVO-SALIDA",
++  "OLED-ENTRADA",
++  "OLED-SALIDA",
++  "LDR-SALIDA",
++  "LASER-SALIDA",
++  "ESP32-CAM-01"
++]);
+ 
+ let rolesData = [
+   {name:'Usuario Común',icon:'fa-user',discount:'0%',hours:'0h gratis',color:'gray',desc:'Tarifa estándar sin beneficios'},
+@@ -80,6 +98,7 @@ async function init(){
+   await cargarEventosReales();
+   await cargarVehiculosReales();
+   await cargarHistorialReal();
++  await cargarIncidenciasReportes();
+   await cargarTarifaReal();
+   await cargarRolesReales();
+   await cargarPromocionesReales();
+@@ -919,7 +938,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementB
+ // ============================================================
+ // NAVIGATION
+ // ============================================================
+-const PAGE_NAMES={dashboard:'Dashboard',sensors:'Sensores en Vivo',monitor:'Monitoreo en Tiempo Real',vehicles:'Vehículos',history:'Historial y Reportes',tariffs:'Tarifas y Beneficios',settings:'Configuración'};
++const PAGE_NAMES={dashboard:'Dashboard',sensors:'Sensores en Vivo',vehicles:'Vehículos',history:'Historial y Reportes',tariffs:'Tarifas y Beneficios',settings:'Configuración'};
+ 
+ function navigateTo(page,el){
+   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+@@ -937,6 +956,7 @@ function navigateTo(page,el){
+ 
+   if (page === 'dashboard') cargarVistaIntegrada('dashboard');
+   if (page === 'sensors') cargarVistaIntegrada('sensors');
++  if (page === 'history') cargarIncidenciasReportes();
+ 
+   closeDetailPanel();
+ }
+@@ -2935,6 +2955,7 @@ function aplicarFiltrosHistorial() {
+   });
+ 
+   renderHistoryTable(filtrados);
++  renderIncidenciasTable();
+ 
+   showToast(
+     "success",
+@@ -2961,6 +2982,7 @@ function limpiarFiltrosHistorial() {
+   });
+ 
+   renderHistoryTable();
++  renderIncidenciasTable();
+ 
+   showToast(
+     "info",
+@@ -2969,6 +2991,142 @@ function limpiarFiltrosHistorial() {
+   );
+ }
+ 
++function extraerFechaHoraIncidencia(fechaHora) {
++  const texto = String(fechaHora || "");
++  const partes = texto.split(" ");
++
++  if (partes.length !== 2) {
++    return { fechaISO: "", fecha: "—", hora: "—" };
++  }
++
++  const [anio, mes, dia] = partes[0].split("-");
++
++  return {
++    fechaISO: partes[0],
++    fecha: anio && mes && dia ? `${dia}/${mes}/${anio}` : partes[0],
++    hora: partes[1]
++  };
++}
++
++function clasificarIncidencia(log) {
++  const texto = `${log.codigoEvento || ""} ${log.mensaje || ""}`.toLowerCase();
++
++  if (texto.includes("doble") || texto.includes("ya está dentro") || texto.includes("ya esta dentro") || texto.includes("sesión activa") || texto.includes("sesion activa")) {
++    return "Doble ingreso";
++  }
++
++  if (texto.includes("sin pago") || texto.includes("debe pagar") || texto.includes("pago pendiente") || texto.includes("salida rechazada")) {
++    return "Salida sin pago";
++  }
++
++  if (texto.includes("saldo insuficiente")) {
++    return "Saldo insuficiente";
++  }
++
++  return "Incidencia";
++}
++
++function extraerPlacaOUid(texto) {
++  const valor = String(texto || "");
++  const placa = valor.match(/\b[A-Z]{3}[- ]?\d{3}\b/i);
++  if (placa) return placa[0].toUpperCase().replace(" ", "-");
++
++  const uid = valor.match(/\b(?:[0-9A-F]{2}:){3,}[0-9A-F]{2}\b/i);
++  if (uid) return uid[0].toUpperCase();
++
++  return "—";
++}
++
++function filtrarIncidenciasActuales() {
++  const placa = (document.getElementById("h-plate")?.value || "").trim().toLowerCase();
++  const fechaInicio = document.getElementById("h-from")?.value || "";
++  const fechaFin = document.getElementById("h-to")?.value || "";
++
++  return INCIDENCIAS_DATA.filter((incidencia) => {
++    const coincidePlaca = !placa || incidencia.placaUid.toLowerCase().includes(placa) || incidencia.detalle.toLowerCase().includes(placa);
++    const coincideInicio = !fechaInicio || incidencia.fechaISO >= fechaInicio;
++    const coincideFin = !fechaFin || incidencia.fechaISO <= fechaFin;
++    return coincidePlaca && coincideInicio && coincideFin;
++  });
++}
++
++function renderIncidenciasTable() {
++  const tbody = document.getElementById("incidencias-tbody");
++  const contador = document.getElementById("incidencias-count");
++
++  if (!tbody) {
++    return;
++  }
++
++  const incidencias = filtrarIncidenciasActuales();
++
++  if (contador) {
++    contador.textContent = `${incidencias.length} incidencia${incidencias.length === 1 ? "" : "s"}`;
++  }
++
++  if (incidencias.length === 0) {
++    tbody.innerHTML = `
++      <tr>
++        <td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">
++          No hay incidencias con los filtros seleccionados.
++        </td>
++      </tr>
++    `;
++    return;
++  }
++
++  tbody.innerHTML = incidencias.map((incidencia) => `
++    <tr>
++      <td>${escaparTextoIoT(incidencia.fecha)}</td>
++      <td>${escaparTextoIoT(incidencia.hora)}</td>
++      <td><span class="badge badge-red">${escaparTextoIoT(incidencia.tipo)}</span></td>
++      <td style="font-family:monospace">${escaparTextoIoT(incidencia.placaUid)}</td>
++      <td>${escaparTextoIoT(incidencia.detalle)}</td>
++      <td>${escaparTextoIoT(incidencia.origen)}</td>
++    </tr>
++  `).join("");
++}
++
++async function cargarIncidenciasReportes() {
++  try {
++    const respuesta = await fetch("/api/v2/iot/logs?limite=100");
++
++    if (!respuesta.ok) {
++      throw new Error("No se pudieron cargar incidencias");
++    }
++
++    const datos = await respuesta.json();
++
++    if (!datos.ok || !Array.isArray(datos.logs)) {
++      throw new Error(datos.mensaje || "Respuesta de incidencias no válida");
++    }
++
++    INCIDENCIAS_DATA = datos.logs
++      .filter((log) => {
++        const texto = `${log.nivel || ""} ${log.codigoEvento || ""} ${log.mensaje || ""}`.toLowerCase();
++        return texto.includes("incidencia") || texto.includes("sin pago") || texto.includes("debe pagar") || texto.includes("saldo insuficiente") || texto.includes("salida rechazada") || texto.includes("doble") || texto.includes("sesión activa") || texto.includes("sesion activa");
++      })
++      .map((log) => {
++        const fecha = extraerFechaHoraIncidencia(log.fechaHora);
++        const detalle = log.mensaje || "Incidencia registrada";
++
++        return {
++          ...fecha,
++          tipo: clasificarIncidencia(log),
++          placaUid: extraerPlacaOUid(detalle),
++          detalle,
++          origen: log.dispositivo || "Sistema IoT"
++        };
++      });
++
++    renderIncidenciasTable();
++  } catch (error) {
++    console.error("Error al cargar incidencias:", error);
++    INCIDENCIAS_DATA = [];
++    renderIncidenciasTable();
++  }
++}
++
+ async function cargarGraficosHistorialReal() {
+   try {
+     const respuesta = await fetch(
+@@ -3327,6 +3485,43 @@ function renderIoTDevices() {
+   ).join("");
+ }
+ 
++
++function debeOcultarDispositivoIoT(dispositivo) {
++  const tipo = dispositivo.tipoDispositivo || dispositivo.tipo || "";
++  const codigo = dispositivo.codigo || "";
++  return TIPOS_IOT_OCULTOS.has(tipo) || CODIGOS_IOT_OCULTOS.has(codigo);
++}
++
++function calcularResumenDispositivosVisibles(resumen) {
++  if (!Array.isArray(IOT_DEVICES) || IOT_DEVICES.length === 0) {
++    return {
++      online: Number(resumen.dispositivosOnline) || 0,
++      offline: Number(resumen.dispositivosOffline) || 0,
++      advertencia: Number(resumen.dispositivosAdvertencia) || 0,
++      mantenimiento: Number(resumen.dispositivosMantenimiento) || 0,
++      latencia: Number(resumen.latenciaPromedioMs) || 0
++    };
++  }
++
++  const total = { online: 0, offline: 0, advertencia: 0, mantenimiento: 0, latencia: 0 };
++  let latencias = 0;
++
++  IOT_DEVICES.forEach((dispositivo) => {
++    if (dispositivo.status === "online") total.online += 1;
++    else if (dispositivo.status === "advertencia") total.advertencia += 1;
++    else if (dispositivo.status === "mantenimiento") total.mantenimiento += 1;
++    else total.offline += 1;
++
++    if (Number(dispositivo.latency) > 0) {
++      total.latencia += Number(dispositivo.latency);
++      latencias += 1;
++    }
++  });
++
++  total.latencia = latencias > 0 ? Math.round(total.latencia / latencias) : 0;
++  return total;
++}
++
+ function formatearSincronizacionIoT(fecha) {
+   if (!fecha) {
+     return "Sin registros";
+@@ -3418,13 +3613,16 @@ async function cargarResumenIoTReal() {
+ 
+     const resumen = datos.resumen;
+ 
++    const resumenVisible =
++      calcularResumenDispositivosVisibles(resumen);
++
+     const totalAlertas =
+-      Number(resumen.dispositivosOffline || 0) +
+-      Number(resumen.dispositivosAdvertencia || 0) +
+-      Number(resumen.dispositivosMantenimiento || 0);
++      Number(resumenVisible.offline || 0) +
++      Number(resumenVisible.advertencia || 0) +
++      Number(resumenVisible.mantenimiento || 0);
+ 
+     const latencia =
+-      Number(resumen.latenciaPromedioMs) || 0;
++      Number(resumenVisible.latencia) || 0;
+ 
+     const badgeOnline =
+       document.getElementById("iot-online-badge");
+@@ -3454,7 +3652,7 @@ async function cargarResumenIoTReal() {
+           class="status-dot dot-green"
+           style="margin:0;margin-right:4px"
+         ></span>
+-        ${Number(resumen.dispositivosOnline)} Online
++        ${Number(resumenVisible.online)} Online
+       `;
+     }
+ 
+@@ -3465,9 +3663,9 @@ async function cargarResumenIoTReal() {
+         }`;
+ 
+       badgeAlertas.title =
+-        `${Number(resumen.dispositivosOffline)} offline, ` +
+-        `${Number(resumen.dispositivosAdvertencia)} en advertencia y ` +
+-        `${Number(resumen.dispositivosMantenimiento)} en mantenimiento`;
++        `${Number(resumenVisible.offline)} offline, ` +
++        `${Number(resumenVisible.advertencia)} en advertencia y ` +
++        `${Number(resumenVisible.mantenimiento)} en mantenimiento`;
+     }
+ 
+     if (kpiLatencia) {
+@@ -3521,14 +3719,9 @@ async function cargarResumenIoTReal() {
+ function obtenerIconoDispositivoIoT(tipo) {
+   const iconos = {
+     "ESP32": "fa-microchip",
+-    "ESP32-CAM": "fa-camera",
+     "RFID": "fa-satellite-dish",
+     "Sensor": "fa-wave-square",
+-    "OLED": "fa-desktop",
+     "Servomotor": "fa-gears",
+-    "Puntero laser": "fa-bullseye",
+-    "LDR": "fa-sun",
+-    "Potenciometro": "fa-sliders",
+     "Otro": "fa-plug"
+   };
+ 
+@@ -3556,158 +3749,6 @@ function formatearFechaIoT(fecha) {
+   return `${fechaPartes[2]}/${fechaPartes[1]}/${fechaPartes[0]} ${partes[1]}`;
+ }
+ 
+-function actualizarMonitorCamaraReal() {
+-  if (window.smartparkCamera && window.smartparkCamera.connected) {
+-    return;
+-  }
+-  const camara = IOT_DEVICES.find(
+-    (dispositivo) =>
+-      dispositivo.tipo === "ESP32-CAM"
+-  );
+-
+-  const nombre =
+-    document.getElementById("monitor-camera-name");
+-
+-  const estado =
+-    document.getElementById("monitor-camera-status");
+-
+-  const direccion =
+-    document.getElementById("monitor-camera-address");
+-
+-  const latencia =
+-    document.getElementById("monitor-camera-latency");
+-
+-  const ultimaLectura =
+-    document.getElementById("monitor-camera-last");
+-
+-  const estadoDispositivo =
+-    document.getElementById(
+-      "monitor-camera-device-state"
+-    );
+-
+-  const indicador =
+-    document.getElementById("monitor-camera-rec");
+-
+-  const estadoSistema =
+-    document.getElementById(
+-      "monitor-system-status"
+-    );
+-
+-  const activos = vehiclesData.filter(
+-    (vehiculo) => vehiculo.inside
+-  ).length;
+-
+-  const contador =
+-    document.getElementById(
+-      "monitor-detected-count"
+-    );
+-
+-  if (contador) {
+-    contador.textContent =
+-      `${activos} activo${activos === 1 ? "" : "s"}`;
+-  }
+-
+-  if (!camara) {
+-    if (nombre) {
+-      nombre.textContent = "Cámara no registrada";
+-    }
+-
+-    if (estado) {
+-      estado.textContent = "Sin conexión";
+-      estado.className = "badge badge-gray";
+-    }
+-
+-    if (direccion) {
+-      direccion.textContent = "Sin dirección";
+-    }
+-
+-    if (latencia) {
+-      latencia.textContent = "—";
+-    }
+-
+-    if (ultimaLectura) {
+-      ultimaLectura.textContent = "Sin registro";
+-    }
+-
+-    if (estadoDispositivo) {
+-      estadoDispositivo.textContent =
+-        "No registrada";
+-    }
+-
+-        if (estadoSistema) {
+-      estadoSistema.textContent =
+-        "Cámara no registrada";
+-
+-      estadoSistema.style.color =
+-        "var(--red)";
+-    }
+-
+-    return;
+-  }
+-
+-  const estaOnline =
+-    camara.status === "online";
+-  
+-  if (estadoSistema) {
+-    estadoSistema.textContent =
+-      estaOnline
+-        ? "Sistema conectado"
+-        : "Sistema sin conexión";
+-
+-    estadoSistema.style.color =
+-      estaOnline
+-        ? "var(--green)"
+-        : "var(--red)";
+-  }
+-
+-  if (nombre) {
+-    nombre.textContent = camara.name;
+-  }
+-
+-  if (estado) {
+-    estado.textContent =
+-      estaOnline ? "Online" : camara.status;
+-
+-    estado.className =
+-      estaOnline
+-        ? "badge badge-green"
+-        : "badge badge-red";
+-  }
+-
+-  if (direccion) {
+-    direccion.textContent = camara.ip;
+-  }
+-
+-  if (latencia) {
+-    latencia.textContent =
+-      camara.latency > 0
+-        ? `${camara.latency} ms`
+-        : "Sin dato";
+-  }
+-
+-  if (ultimaLectura) {
+-    ultimaLectura.textContent =
+-      camara.last || "Sin registro";
+-  }
+-
+-  if (estadoDispositivo) {
+-    estadoDispositivo.textContent =
+-      estaOnline ? "Operativo" : camara.status;
+-
+-    estadoDispositivo.style.color =
+-      estaOnline
+-        ? "var(--green)"
+-        : "var(--red)";
+-  }
+-
+-  if (indicador) {
+-    indicador.innerHTML = `
+-      <span class="dot"></span>
+-      ${estaOnline ? "CONECTADA" : "SIN SEÑAL"}
+-    `;
+-  }
+-}
+-
+ async function cargarDispositivosIoTReales() {
+   try {
+     const respuesta = await fetch(
+@@ -3732,8 +3773,9 @@ async function cargarDispositivosIoTReales() {
+       );
+     }
+ 
+-    IOT_DEVICES = datos.dispositivos.map(
+-      (dispositivo) => ({
++    IOT_DEVICES = datos.dispositivos
++      .filter((dispositivo) => !debeOcultarDispositivoIoT(dispositivo))
++      .map((dispositivo) => ({
+         idDispositivo:
+           dispositivo.idDispositivo,
+ 
+@@ -3787,8 +3829,6 @@ async function cargarDispositivosIoTReales() {
+ 
+     renderIoTDevices();
+ 
+-    actualizarMonitorCamaraReal();
+-
+     console.log(
+       "Dispositivos IoT actualizados con datos reales",
+       IOT_DEVICES
+diff --git a/public/assets/js/camera-monitor.js b/public/assets/js/camera-monitor.js
+deleted file mode 100644
+index 1a81fbe..0000000
+--- a/public/assets/js/camera-monitor.js
++++ /dev/null
+@@ -1,912 +0,0 @@
+-// ============================================================
+-// MONITOREO POR ESP32-CAM VIA WSS RAILWAY
+-// No usa IP local ni servidor Python.
+-// La ESP32-CAM se conecta al mismo /iot-ws que usa el ESP32 principal.
+-// El tiempo de estacionamiento se calcula SOLO por RFID:
+-// entrada RFID = inicio, salida RFID = fin y cobro.
+-// La cámara solo ayuda a visualizar/calibrar espacios ocupados.
+-// ============================================================
+-(function () {
+-  const TOTAL_ESPACIOS = 10;
+-  const STORAGE_ZONAS = 'smartpark_camera_zonas_wss';
+-  const STORAGE_BG = 'smartpark_camera_bg_wss';
+-  const STORAGE_WS = 'smartpark_camera_ws';
+-  const STORAGE_MODE = 'smartpark_camera_mode';
+-  const STORAGE_SENS = 'smartpark_camera_sensibilidad_wss';
+-
+-  const DEFAULT_SENS = {
+-    umbral_brillo: 24,
+-    umbral_bordes: 0.02,
+-    canny_bajo: 20,
+-    canny_alto: 80
+-  };
+-
+-  const cam = window.smartparkCamera = {
+-    mode: localStorage.getItem(STORAGE_MODE) || 'prueba',
+-    serverUrl: localStorage.getItem(STORAGE_WS) || getDefaultWsUrl(),
+-    cameraUrl: '',
+-    ws: null,
+-    connected: false,
+-    cameraOnline: false,
+-    zonas: [],
+-    ocupacion: {},
+-    puntosActuales: [],
+-    modoNuevaZona: false,
+-    numeroPendiente: null,
+-    zonaEditando: null,
+-    zonaDebugActual: null,
+-    intervalDebug: null,
+-    reconnectTimer: null,
+-    ultimaLectura: null,
+-    ultimaLatencia: 0,
+-    ultimoFrameTs: 0,
+-    ultimoFrameId: 0,
+-    backgroundDataUrl: localStorage.getItem(STORAGE_BG) || '',
+-    bgImage: null,
+-    bgReady: false,
+-    sensibilidad: cargarSensibilidadLocal()
+-  };
+-
+-  function el(id) {
+-    return document.getElementById(id);
+-  }
+-
+-  function toast(tipo, mensaje, icono) {
+-    if (typeof showToast === 'function') {
+-      showToast(tipo, mensaje, icono || 'fa-circle-info');
+-    } else {
+-      console.log(`[${tipo}] ${mensaje}`);
+-    }
+-  }
+-
+-  function getDefaultWsUrl() {
+-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+-    return `${proto}//${window.location.host}/iot-ws?client=panel&camera=1`;
+-  }
+-
+-  function normalizarWs(valor) {
+-    let url = String(valor || '').trim();
+-    if (!url) return getDefaultWsUrl();
+-
+-    url = url.replace(/\/$/, '');
+-
+-    if (/^https:\/\//i.test(url)) {
+-      url = url.replace(/^https:\/\//i, 'wss://');
+-    } else if (/^http:\/\//i.test(url)) {
+-      url = url.replace(/^http:\/\//i, 'ws://');
+-    } else if (!/^wss?:\/\//i.test(url)) {
+-      url = `wss://${url}`;
+-    }
+-
+-    if (!/\/iot-ws(\?|$)/i.test(url)) {
+-      url += '/iot-ws?client=panel&camera=1';
+-    } else if (!/[?&]client=/i.test(url)) {
+-      url += url.includes('?') ? '&client=panel&camera=1' : '?client=panel&camera=1';
+-    }
+-
+-    return url;
+-  }
+-
+-  function wsHostDesdeUrl(url) {
+-    try {
+-      return new URL(url).host;
+-    } catch {
+-      return window.location.host;
+-    }
+-  }
+-
+-  function setTexto(id, valor) {
+-    const nodo = el(id);
+-    if (nodo) nodo.textContent = valor;
+-  }
+-
+-  function setEstadoCamara(estado, texto) {
+-    const badge = el('cam-conn-badge');
+-    if (badge) {
+-      badge.className = `cam-conn-badge ${estado}`;
+-      badge.innerHTML = `<span class="dot"></span>${texto}`;
+-    }
+-
+-    const estadoCam = el('monitor-camera-status');
+-    if (estadoCam) {
+-      estadoCam.textContent = texto;
+-      estadoCam.className = estado === 'online'
+-        ? 'badge badge-green'
+-        : estado === 'connecting'
+-          ? 'badge badge-amber'
+-          : 'badge badge-red';
+-    }
+-
+-    const rec = el('monitor-camera-rec');
+-    if (rec) {
+-      rec.innerHTML = `<span class="dot"></span>${estado === 'online' ? 'CONECTADA' : estado === 'connecting' ? 'CONECTANDO' : 'SIN SEÑAL'}`;
+-      rec.classList.toggle('online', estado === 'online');
+-    }
+-
+-    const btn = el('monitor-capture-btn');
+-    if (btn) {
+-      btn.disabled = estado !== 'online';
+-      btn.innerHTML = estado === 'online'
+-        ? '<i class="fa-solid fa-camera"></i> Capturar vista'
+-        : '<i class="fa-solid fa-camera"></i> Captura no disponible';
+-      btn.title = estado === 'online' ? 'Abrir captura actual de la ESP32-CAM' : 'Disponible cuando llegue imagen por WSS';
+-    }
+-
+-    setTexto('monitor-camera-device-state', estado === 'online' ? 'Operativo' : texto);
+-    const sistema = el('monitor-system-status');
+-    if (sistema) {
+-      sistema.textContent = estado === 'online' ? 'Sistema conectado' : texto;
+-      sistema.style.color = estado === 'online' ? 'var(--green)' : estado === 'connecting' ? 'var(--amber)' : 'var(--red)';
+-    }
+-  }
+-
+-  function actualizarResumenCamara() {
+-    const ocupados = Object.values(cam.ocupacion).filter(Boolean).length;
+-    const libres = TOTAL_ESPACIOS - ocupados;
+-
+-    setTexto('cam-detectados', `Detectados: ${ocupados} / ${TOTAL_ESPACIOS}`);
+-    setTexto('cam-stat-ocupados', ocupados);
+-    setTexto('cam-stat-libres', libres);
+-    setTexto('cam-spaces-sub', `${ocupados} ocupados · ${libres} libres`);
+-    setTexto('monitor-camera-latency', cam.ultimaLatencia ? `${cam.ultimaLatencia} ms` : 'Sin dato');
+-    setTexto('monitor-camera-last', cam.ultimaLectura ? cam.ultimaLectura.toLocaleTimeString('es-PE') : 'Sin registro');
+-    setTexto('cam-ts', cam.ultimaLectura ? `Último frame ${cam.ultimaLectura.toLocaleTimeString('es-PE')}` : 'Esperando lectura');
+-
+-    const activos = typeof vehiclesData !== 'undefined'
+-      ? vehiclesData.filter((vehiculo) => vehiculo.inside).length
+-      : 0;
+-    setTexto('monitor-detected-count', `${activos} activo${activos === 1 ? '' : 's'}`);
+-  }
+-
+-  function cargarSensibilidadLocal() {
+-    try {
+-      return { ...DEFAULT_SENS, ...JSON.parse(localStorage.getItem(STORAGE_SENS) || '{}') };
+-    } catch {
+-      return { ...DEFAULT_SENS };
+-    }
+-  }
+-
+-  function guardarSensibilidadLocal() {
+-    localStorage.setItem(STORAGE_SENS, JSON.stringify(cam.sensibilidad));
+-  }
+-
+-  function cargarBackground() {
+-    cam.bgReady = false;
+-    cam.bgImage = null;
+-    if (!cam.backgroundDataUrl) return;
+-
+-    const img = new Image();
+-    img.onload = () => {
+-      cam.bgReady = true;
+-      cam.bgImage = img;
+-      detectarOcupacionCliente();
+-    };
+-    img.onerror = () => {
+-      cam.bgReady = false;
+-      cam.bgImage = null;
+-    };
+-    img.src = cam.backgroundDataUrl;
+-  }
+-
+-  function cargarZonasDesdeLocal() {
+-    try {
+-      const zonas = JSON.parse(localStorage.getItem(STORAGE_ZONAS) || '[]');
+-      cam.zonas = Array.isArray(zonas)
+-        ? zonas.map((z) => ({ nombre: String(z.nombre), puntos: z.puntos || [], ocupada: !!z.ocupada }))
+-        : [];
+-    } catch {
+-      cam.zonas = [];
+-    }
+-
+-    cam.ocupacion = {};
+-    cam.zonas.forEach((zona) => {
+-      cam.ocupacion[String(zona.nombre)] = !!zona.ocupada;
+-    });
+-  }
+-
+-  function guardarZonasLocal() {
+-    localStorage.setItem(STORAGE_ZONAS, JSON.stringify(cam.zonas));
+-  }
+-
+-  window.renderMonitorParkingStrip = function renderMonitorParkingStripCamara() {
+-    const strip = el('monitor-parking-strip');
+-    if (!strip) return;
+-
+-    let html = '';
+-    for (let i = 1; i <= TOTAL_ESPACIOS; i++) {
+-      const clave = String(i);
+-      const tieneDatoCamara = Object.prototype.hasOwnProperty.call(cam.ocupacion, clave);
+-      let cls = 'spot-free';
+-      let label = 'Libre';
+-
+-      if (tieneDatoCamara) {
+-        cls = cam.ocupacion[clave] ? 'spot-occupied' : 'spot-free';
+-        label = cam.ocupacion[clave] ? 'Ocupado por cámara' : 'Libre por cámara';
+-      } else if (typeof SPOT_STATE !== 'undefined') {
+-        cls = SPOT_STATE[i] || 'spot-free';
+-        label = cls === 'spot-occupied' ? 'Ocupado' : cls === 'spot-reserved' ? 'Reservado' : cls === 'spot-maintenance' ? 'Mantenimiento' : 'Libre';
+-      }
+-
+-      const calibrada = cam.zonas.some((z) => String(z.nombre) === clave);
+-      html += `
+-        <button
+-          type="button"
+-          class="parking-spot ${cls} cam-space-mini ${calibrada ? 'calibrated' : 'not-calibrated'}"
+-          title="Espacio ${i} · ${label}${calibrada ? ' · zona calibrada' : ' · sin zona calibrada'}"
+-          onclick="camSeleccionarZonaDebug('${i}')"
+-        >
+-          <span>${i}</span>
+-          <i class="fa-solid ${calibrada ? 'fa-eye' : 'fa-pen'}"></i>
+-        </button>`;
+-    }
+-    strip.innerHTML = html;
+-  };
+-
+-  function sincronizarEstadoConMapa() {
+-    for (let i = 1; i <= TOTAL_ESPACIOS; i++) {
+-      const clave = String(i);
+-      if (Object.prototype.hasOwnProperty.call(cam.ocupacion, clave)) {
+-        try {
+-          if (typeof SPOT_STATE !== 'undefined') {
+-            SPOT_STATE[i] = cam.ocupacion[clave] ? 'spot-occupied' : 'spot-free';
+-          }
+-        } catch (_) {}
+-      }
+-    }
+-
+-    if (typeof renderParkingMap === 'function') {
+-      renderParkingMap();
+-    } else {
+-      window.renderMonitorParkingStrip();
+-    }
+-  }
+-
+-  function actualizarVistaConectada() {
+-    setEstadoCamara('online', 'Online');
+-    cam.connected = true;
+-    cam.cameraOnline = true;
+-    setTexto('monitor-camera-name', 'ESP32-CAM WSS');
+-    setTexto('monitor-camera-address', wsHostDesdeUrl(cam.serverUrl));
+-    const empty = el('cam-empty-state');
+-    if (empty) empty.style.display = 'none';
+-    actualizarResumenCamara();
+-  }
+-
+-  function ajustarOverlay() {
+-    const img = el('cam-live-img');
+-    const canvas = el('cam-overlay-canvas');
+-    if (!img || !canvas || !img.clientWidth || !img.clientHeight) return;
+-
+-    canvas.width = img.clientWidth;
+-    canvas.height = img.clientHeight;
+-    canvas.style.left = `${img.offsetLeft}px`;
+-    canvas.style.top = `${img.offsetTop}px`;
+-    cam.ultimaLatencia = cam.ultimoFrameTs ? Math.max(1, Date.now() - cam.ultimoFrameTs) : 0;
+-    cam.ultimaLectura = new Date();
+-    actualizarVistaConectada();
+-    redibujarZonas();
+-  }
+-
+-  function puntoPantallaAReal(evento) {
+-    const img = el('cam-live-img');
+-    const canvas = el('cam-overlay-canvas');
+-    const rect = canvas.getBoundingClientRect();
+-    const x = evento.clientX - rect.left;
+-    const y = evento.clientY - rect.top;
+-    return [
+-      Math.round(x * (img.naturalWidth / canvas.width)),
+-      Math.round(y * (img.naturalHeight / canvas.height))
+-    ];
+-  }
+-
+-  function puntoRealAPantalla(punto) {
+-    const img = el('cam-live-img');
+-    const canvas = el('cam-overlay-canvas');
+-    if (!img || !canvas || !img.naturalWidth || !img.naturalHeight) return [0, 0];
+-    return [
+-      punto[0] * (canvas.width / img.naturalWidth),
+-      punto[1] * (canvas.height / img.naturalHeight)
+-    ];
+-  }
+-
+-  function puntoDentroPoligono(punto, poligono) {
+-    let dentro = false;
+-    for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
+-      const xi = poligono[i][0], yi = poligono[i][1];
+-      const xj = poligono[j][0], yj = poligono[j][1];
+-      const interseca = ((yi > punto[1]) !== (yj > punto[1])) &&
+-        (punto[0] < (xj - xi) * (punto[1] - yi) / ((yj - yi) || 1) + xi);
+-      if (interseca) dentro = !dentro;
+-    }
+-    return dentro;
+-  }
+-
+-  function redibujarZonas() {
+-    const canvas = el('cam-overlay-canvas');
+-    if (!canvas) return;
+-    const ctx = canvas.getContext('2d');
+-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+-    ctx.lineWidth = 2;
+-    ctx.font = '700 13px Inter, Segoe UI, sans-serif';
+-
+-    const puntosPantalla = cam.puntosActuales.map(puntoRealAPantalla);
+-    ctx.fillStyle = '#4f8ef7';
+-    puntosPantalla.forEach((p) => {
+-      ctx.beginPath();
+-      ctx.arc(p[0], p[1], 4, 0, Math.PI * 2);
+-      ctx.fill();
+-    });
+-
+-    if (puntosPantalla.length > 1) {
+-      ctx.strokeStyle = '#4f8ef7';
+-      ctx.beginPath();
+-      ctx.moveTo(puntosPantalla[0][0], puntosPantalla[0][1]);
+-      puntosPantalla.slice(1).forEach((p) => ctx.lineTo(p[0], p[1]));
+-      ctx.stroke();
+-    }
+-
+-    cam.zonas.forEach((zona) => {
+-      if (!zona.puntos || !zona.puntos.length) return;
+-      const pts = zona.puntos.map(puntoRealAPantalla);
+-      const ocupada = !!zona.ocupada;
+-      ctx.strokeStyle = ocupada ? '#ef4444' : '#22c55e';
+-      ctx.fillStyle = ocupada ? 'rgba(239,68,68,.16)' : 'rgba(34,197,94,.12)';
+-      ctx.beginPath();
+-      ctx.moveTo(pts[0][0], pts[0][1]);
+-      pts.slice(1).forEach((p) => ctx.lineTo(p[0], p[1]));
+-      ctx.closePath();
+-      ctx.fill();
+-      ctx.stroke();
+-
+-      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+-      const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+-      ctx.fillStyle = ocupada ? '#ef4444' : '#22c55e';
+-      ctx.fillText(`#${zona.nombre}`, cx - 12, cy);
+-    });
+-  }
+-
+-  function crearCanvasImagen(img) {
+-    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+-    const canvas = document.createElement('canvas');
+-    canvas.width = img.naturalWidth;
+-    canvas.height = img.naturalHeight;
+-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+-    return { canvas, ctx };
+-  }
+-
+-  function cajaDePoligono(puntos, width, height) {
+-    const xs = puntos.map((p) => p[0]);
+-    const ys = puntos.map((p) => p[1]);
+-    return {
+-      minX: Math.max(0, Math.floor(Math.min(...xs))),
+-      maxX: Math.min(width - 1, Math.ceil(Math.max(...xs))),
+-      minY: Math.max(0, Math.floor(Math.min(...ys))),
+-      maxY: Math.min(height - 1, Math.ceil(Math.max(...ys)))
+-    };
+-  }
+-
+-  function promedioDiferenciaZona(zona, actualCtx, fondoCtx, width, height) {
+-    const puntos = zona.puntos || [];
+-    if (puntos.length < 3) return 0;
+-
+-    const box = cajaDePoligono(puntos, width, height);
+-    const step = Math.max(3, Math.floor(Math.max(box.maxX - box.minX, box.maxY - box.minY) / 28));
+-    let suma = 0;
+-    let muestras = 0;
+-
+-    for (let y = box.minY; y <= box.maxY; y += step) {
+-      for (let x = box.minX; x <= box.maxX; x += step) {
+-        if (!puntoDentroPoligono([x, y], puntos)) continue;
+-        const a = actualCtx.getImageData(x, y, 1, 1).data;
+-        const b = fondoCtx.getImageData(x, y, 1, 1).data;
+-        suma += (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+-        muestras += 1;
+-      }
+-    }
+-
+-    return muestras ? suma / muestras : 0;
+-  }
+-
+-  function detectarOcupacionCliente() {
+-    const img = el('cam-live-img');
+-    if (!img || !img.complete || !img.naturalWidth || !cam.zonas.length || !cam.bgReady || !cam.bgImage) {
+-      return;
+-    }
+-
+-    const actual = crearCanvasImagen(img);
+-    const fondoCanvas = document.createElement('canvas');
+-    fondoCanvas.width = img.naturalWidth;
+-    fondoCanvas.height = img.naturalHeight;
+-    const fondoCtx = fondoCanvas.getContext('2d', { willReadFrequently: true });
+-    fondoCtx.drawImage(cam.bgImage, 0, 0, fondoCanvas.width, fondoCanvas.height);
+-
+-    if (!actual) return;
+-
+-    const umbral = Number(cam.sensibilidad.umbral_brillo) || DEFAULT_SENS.umbral_brillo;
+-    let cambio = false;
+-
+-    cam.zonas.forEach((zona) => {
+-      const diff = promedioDiferenciaZona(zona, actual.ctx, fondoCtx, actual.canvas.width, actual.canvas.height);
+-      zona.diff = diff;
+-      const ocupada = diff >= umbral;
+-      if (zona.ocupada !== ocupada) cambio = true;
+-      zona.ocupada = ocupada;
+-      cam.ocupacion[String(zona.nombre)] = ocupada;
+-    });
+-
+-    if (cambio) guardarZonasLocal();
+-    redibujarZonas();
+-    sincronizarEstadoConMapa();
+-    actualizarResumenCamara();
+-    actualizarDebugZona();
+-  }
+-
+-  function manejarMensajeCamara(data) {
+-    if (!data || typeof data !== 'object') return;
+-
+-    if (data.gateway && data.type === 'status') {
+-      if (Number(data.cameras || 0) > 0 && !cam.cameraOnline) {
+-        setEstadoCamara('connecting', 'ESP32-CAM enlazada');
+-      }
+-      return;
+-    }
+-
+-    if (data.gateway && data.type === 'warning' && data.target === 'camera') {
+-      setEstadoCamara('offline', 'Sin ESP32-CAM');
+-      return;
+-    }
+-
+-    if (data.type === 'camera_status') {
+-      if (data.status === 'online') {
+-        setEstadoCamara('connecting', 'Esperando imagen');
+-        setTexto('monitor-camera-address', data.ip || wsHostDesdeUrl(cam.serverUrl));
+-      }
+-      return;
+-    }
+-
+-    if (data.type === 'camera_ack') {
+-      return;
+-    }
+-
+-    if (data.type !== 'camera_frame' || !data.data) {
+-      return;
+-    }
+-
+-    const img = el('cam-live-img');
+-    const empty = el('cam-empty-state');
+-    if (!img) return;
+-
+-    cam.ultimoFrameTs = Number(data.timestampMs || Date.now());
+-    cam.ultimoFrameId = Number(data.frame || cam.ultimoFrameId + 1);
+-    img.src = `data:${data.contentType || 'image/jpeg'};base64,${data.data}`;
+-    if (empty) empty.style.display = 'none';
+-  }
+-
+-  function abrirWsCamara() {
+-    const url = cam.serverUrl;
+-
+-    if (cam.ws && (cam.ws.readyState === WebSocket.OPEN || cam.ws.readyState === WebSocket.CONNECTING)) {
+-      cam.ws.close();
+-    }
+-
+-    setEstadoCamara('connecting', 'Conectando WSS');
+-    setTexto('monitor-camera-address', wsHostDesdeUrl(url));
+-
+-    try {
+-      cam.ws = new WebSocket(url);
+-    } catch (err) {
+-      setEstadoCamara('offline', 'URL WSS inválida');
+-      toast('error', 'La URL WSS de cámara no es válida.', 'fa-triangle-exclamation');
+-      return;
+-    }
+-
+-    cam.ws.onopen = () => {
+-      cam.connected = true;
+-      setEstadoCamara('connecting', 'Esperando ESP32-CAM');
+-      enviarComandoCamara({ type: 'camera_subscribe' }, false);
+-    };
+-
+-    cam.ws.onmessage = (evento) => {
+-      try {
+-        manejarMensajeCamara(JSON.parse(evento.data));
+-      } catch (_) {
+-        // Ignora telemetría de otros dispositivos que no sea JSON de cámara.
+-      }
+-    };
+-
+-    cam.ws.onerror = () => {
+-      setEstadoCamara('offline', 'Error WSS');
+-    };
+-
+-    cam.ws.onclose = () => {
+-      cam.connected = false;
+-      cam.cameraOnline = false;
+-      if (cam.reconnectTimer) clearTimeout(cam.reconnectTimer);
+-      setEstadoCamara('offline', 'Reconectando');
+-      cam.reconnectTimer = setTimeout(() => {
+-        if (cam.serverUrl) abrirWsCamara();
+-      }, 3000);
+-    };
+-  }
+-
+-  function enviarComandoCamara(data, avisarSiNoConectado = true) {
+-    if (!cam.ws || cam.ws.readyState !== WebSocket.OPEN) {
+-      if (avisarSiNoConectado) toast('warning', 'Primero conecta el visor WSS de cámara.', 'fa-plug-circle-exclamation');
+-      return false;
+-    }
+-
+-    cam.ws.send(JSON.stringify({ target: 'camera', ...data }));
+-    return true;
+-  }
+-
+-  window.abrirModalCamSettings = function abrirModalCamSettings() {
+-    const inputCam = el('cfg-ip-camara');
+-    const inputServer = el('cfg-ip-servidor');
+-    if (inputCam) inputCam.value = wsHostDesdeUrl(cam.serverUrl || getDefaultWsUrl());
+-    if (inputServer) inputServer.value = cam.serverUrl || getDefaultWsUrl();
+-
+-    const modal = el('modal-cam-settings');
+-    if (modal) modal.classList.add('open');
+-  };
+-
+-  window.cerrarModalCamSettings = function cerrarModalCamSettings() {
+-    const modal = el('modal-cam-settings');
+-    if (modal) modal.classList.remove('open');
+-  };
+-
+-  window.conectarCamara = function conectarCamara() {
+-    const inputServer = el('cfg-ip-servidor');
+-    const wsUrl = normalizarWs(inputServer ? inputServer.value : cam.serverUrl);
+-
+-    cam.serverUrl = wsUrl;
+-    localStorage.setItem(STORAGE_WS, cam.serverUrl);
+-    abrirWsCamara();
+-
+-    window.cerrarModalCamSettings();
+-    toast('success', 'Visor WSS listo. Cuando la ESP32-CAM se conecte aparecerá la imagen.', 'fa-camera');
+-  };
+-
+-  window.setCamMode = function setCamMode(modo) {
+-    cam.mode = modo === 'funcionamiento' ? 'funcionamiento' : 'prueba';
+-    localStorage.setItem(STORAGE_MODE, cam.mode);
+-
+-    const btnPrueba = el('cam-mode-btn-prueba');
+-    const btnFunc = el('cam-mode-btn-funcionamiento');
+-    const sub = el('cam-mode-switch-sub');
+-    const banner = el('cam-mode-banner');
+-
+-    if (btnPrueba) btnPrueba.classList.toggle('active', cam.mode === 'prueba');
+-    if (btnFunc) btnFunc.classList.toggle('active', cam.mode === 'funcionamiento');
+-
+-    document.body.classList.toggle('cam-locked', cam.mode === 'funcionamiento');
+-
+-    if (sub) {
+-      sub.textContent = cam.mode === 'prueba'
+-        ? 'Modo prueba — calibración de zonas habilitada'
+-        : 'En funcionamiento — calibración bloqueada, detección activa';
+-    }
+-
+-    if (banner) {
+-      banner.className = `camera-mode-banner ${cam.mode}`;
+-      banner.innerHTML = cam.mode === 'prueba'
+-        ? '<i class="fa-solid fa-circle-info"></i> Modo prueba activo: calibra las zonas sobre la imagen de la cámara.'
+-        : '<i class="fa-solid fa-lock"></i> En funcionamiento: la cámara solo marca espacios ocupados. El tiempo y el cobro se calculan por RFID.';
+-    }
+-  };
+-
+-  window.toggleModoNuevaZona = function toggleModoNuevaZona() {
+-    if (cam.mode !== 'prueba') {
+-      toast('warning', 'Cambia a modo prueba para calibrar zonas.', 'fa-lock');
+-      return;
+-    }
+-    if (!cam.cameraOnline) {
+-      toast('warning', 'Espera a recibir imagen de la ESP32-CAM.', 'fa-video-slash');
+-      return;
+-    }
+-    cam.modoNuevaZona = !cam.modoNuevaZona;
+-    cam.numeroPendiente = null;
+-    cam.puntosActuales = [];
+-    const btn = el('btn-cam-nueva-zona');
+-    if (btn) btn.classList.toggle('active', cam.modoNuevaZona);
+-    setTexto('cam-toolbar-hint', cam.modoNuevaZona ? 'Marca 4 puntos sobre el video para crear una zona.' : '');
+-    redibujarZonas();
+-  };
+-
+-  window.camEditarEspacio = function camEditarEspacio(numero) {
+-    if (cam.mode !== 'prueba') {
+-      toast('warning', 'La edición está bloqueada en funcionamiento.', 'fa-lock');
+-      return;
+-    }
+-    const zona = cam.zonas.find((z) => String(z.nombre) === String(numero));
+-    if (zona) {
+-      abrirModalZona(zona.nombre);
+-      return;
+-    }
+-    if (!cam.cameraOnline) {
+-      toast('warning', 'Espera a recibir imagen de la ESP32-CAM.', 'fa-video-slash');
+-      return;
+-    }
+-    cam.numeroPendiente = String(numero);
+-    cam.modoNuevaZona = true;
+-    cam.puntosActuales = [];
+-    const btn = el('btn-cam-nueva-zona');
+-    if (btn) btn.classList.add('active');
+-    setTexto('cam-toolbar-hint', `Dibuja el espacio #${numero} sobre el video con 4 puntos.`);
+-    redibujarZonas();
+-  };
+-
+-  function abrirModalZona(nombre) {
+-    cam.zonaEditando = String(nombre);
+-    const input = el('zona-numero-input');
+-    if (input) input.value = cam.zonaEditando;
+-
+-    const info = el('zona-estado-actual');
+-    const zona = cam.zonas.find((z) => String(z.nombre) === cam.zonaEditando);
+-    if (info && zona) {
+-      info.innerHTML = `Estado actual: <b style="color:${zona.ocupada ? 'var(--red)' : 'var(--green)'}">${zona.ocupada ? 'OCUPADO' : 'LIBRE'}</b> · diferencia visual: ${Number(zona.diff || 0).toFixed(1)}`;
+-    }
+-
+-    const modal = el('modal-zona');
+-    if (modal) modal.classList.add('open');
+-  }
+-
+-  window.cerrarModalZona = function cerrarModalZona() {
+-    const modal = el('modal-zona');
+-    if (modal) modal.classList.remove('open');
+-    cam.zonaEditando = null;
+-  };
+-
+-  window.guardarNumeroZona = function guardarNumeroZona() {
+-    const input = el('zona-numero-input');
+-    const nuevo = input ? input.value.trim() : '';
+-    if (!nuevo) {
+-      toast('warning', 'Escribe un número de espacio válido.', 'fa-triangle-exclamation');
+-      return;
+-    }
+-    const zona = cam.zonas.find((z) => String(z.nombre) === String(cam.zonaEditando));
+-    if (zona) zona.nombre = nuevo;
+-    window.cerrarModalZona();
+-    guardarZonasLocal();
+-    window.renderMonitorParkingStrip();
+-    detectarOcupacionCliente();
+-  };
+-
+-  window.eliminarZonaActual = function eliminarZonaActual() {
+-    if (!cam.zonaEditando) return;
+-    cam.zonas = cam.zonas.filter((z) => String(z.nombre) !== String(cam.zonaEditando));
+-    delete cam.ocupacion[String(cam.zonaEditando)];
+-    window.cerrarModalZona();
+-    guardarZonasLocal();
+-    redibujarZonas();
+-    window.renderMonitorParkingStrip();
+-    actualizarResumenCamara();
+-  };
+-
+-  window.guardarZonasCam = function guardarZonasCam() {
+-    guardarZonasLocal();
+-    toast('success', 'Zonas guardadas en el navegador. Recalibra con el estacionamiento vacío.', 'fa-floppy-disk');
+-  };
+-
+-  window.recalibrarZonas = function recalibrarZonas() {
+-    if (cam.mode !== 'prueba') {
+-      toast('warning', 'Cambia a modo prueba para recalibrar.', 'fa-lock');
+-      return;
+-    }
+-    const img = el('cam-live-img');
+-    if (!img || !img.src || !img.naturalWidth) {
+-      toast('warning', 'Primero espera una imagen de la ESP32-CAM.', 'fa-video-slash');
+-      return;
+-    }
+-
+-    cam.backgroundDataUrl = img.src;
+-    localStorage.setItem(STORAGE_BG, cam.backgroundDataUrl);
+-    cargarBackground();
+-    toast('success', 'Referencia guardada. Haz esto con los espacios vacíos.', 'fa-crosshairs');
+-  };
+-
+-  window.camBorrarTodasLasZonas = function camBorrarTodasLasZonas() {
+-    if (cam.mode !== 'prueba') {
+-      toast('warning', 'Cambia a modo prueba para borrar zonas.', 'fa-lock');
+-      return;
+-    }
+-    if (!confirm(`Esto eliminará las ${cam.zonas.length} zonas calibradas. ¿Continuar?`)) return;
+-    cam.zonas = [];
+-    cam.ocupacion = {};
+-    cam.puntosActuales = [];
+-    guardarZonasLocal();
+-    redibujarZonas();
+-    window.renderMonitorParkingStrip();
+-    actualizarResumenCamara();
+-  };
+-
+-  window.camSeleccionarZonaDebug = function camSeleccionarZonaDebug(numero) {
+-    cam.zonaDebugActual = String(numero);
+-    const wrap = el('cam-debug-imgwrap');
+-    const tag = el('cam-debug-zona-tag');
+-
+-    document.querySelectorAll('.cam-space-mini').forEach((n) => n.classList.remove('selected'));
+-    const boton = Array.from(document.querySelectorAll('.cam-space-mini')).find((n) => n.textContent.trim().startsWith(String(numero)));
+-    if (boton) boton.classList.add('selected');
+-
+-    if (!wrap || !tag) return;
+-    const zonaExiste = cam.zonas.some((z) => String(z.nombre) === String(numero));
+-    if (!zonaExiste) {
+-      wrap.innerHTML = `<div class="cam-debug-empty">El espacio #${numero} aún no tiene zona calibrada. Usa Nueva zona.</div>`;
+-      tag.style.display = 'none';
+-      return;
+-    }
+-
+-    tag.textContent = `#${numero}`;
+-    tag.style.display = 'inline-block';
+-    actualizarDebugZona();
+-    if (cam.intervalDebug) clearInterval(cam.intervalDebug);
+-    cam.intervalDebug = setInterval(actualizarDebugZona, 1200);
+-  };
+-
+-  function actualizarDebugZona() {
+-    if (!cam.zonaDebugActual) return;
+-    const wrap = el('cam-debug-imgwrap');
+-    const img = el('cam-live-img');
+-    if (!wrap || !img || !img.naturalWidth) return;
+-
+-    const zona = cam.zonas.find((z) => String(z.nombre) === String(cam.zonaDebugActual));
+-    if (!zona) return;
+-
+-    const canvas = document.createElement('canvas');
+-    canvas.width = 320;
+-    canvas.height = Math.max(160, Math.round(320 * (img.naturalHeight / img.naturalWidth)));
+-    const ctx = canvas.getContext('2d');
+-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+-
+-    const sx = canvas.width / img.naturalWidth;
+-    const sy = canvas.height / img.naturalHeight;
+-    const pts = zona.puntos.map((p) => [p[0] * sx, p[1] * sy]);
+-    if (pts.length) {
+-      ctx.lineWidth = 3;
+-      ctx.strokeStyle = zona.ocupada ? '#ef4444' : '#22c55e';
+-      ctx.fillStyle = zona.ocupada ? 'rgba(239,68,68,.22)' : 'rgba(34,197,94,.18)';
+-      ctx.beginPath();
+-      ctx.moveTo(pts[0][0], pts[0][1]);
+-      pts.slice(1).forEach((p) => ctx.lineTo(p[0], p[1]));
+-      ctx.closePath();
+-      ctx.fill();
+-      ctx.stroke();
+-    }
+-    ctx.fillStyle = '#ffffff';
+-    ctx.font = '700 14px Inter, Arial, sans-serif';
+-    ctx.fillText(`#${zona.nombre} · ${zona.ocupada ? 'OCUPADO' : 'LIBRE'} · diff ${Number(zona.diff || 0).toFixed(1)}`, 10, 22);
+-
+-    wrap.innerHTML = '';
+-    const preview = document.createElement('img');
+-    preview.alt = `Depuración zona ${zona.nombre}`;
+-    preview.src = canvas.toDataURL('image/jpeg', 0.85);
+-    wrap.appendChild(preview);
+-  }
+-
+-  window.camSetLed = function camSetLed(valor) {
+-    setTexto('cfg-led-val', valor);
+-    enviarComandoCamara({ type: 'camera_cmd', cmd: 'led', value: Number(valor) }, false);
+-  };
+-
+-  window.camSetConfig = function camSetConfig(param, valor) {
+-    setTexto(`cfg-${param}-val`, valor);
+-    enviarComandoCamara({ type: 'camera_cmd', cmd: 'config', param, value: Number(valor) }, false);
+-  };
+-
+-  window.camSetXclk = function camSetXclk(valor) {
+-    setTexto('cfg-xclk-val', valor);
+-    enviarComandoCamara({ type: 'camera_cmd', cmd: 'xclk', value: Number(valor) }, false);
+-  };
+-
+-  function cargarSensibilidadCamara() {
+-    const mapa = {
+-      umbral_brillo: ['cfg-sens-brillo', 'cfg-sens-brillo-val'],
+-      umbral_bordes: ['cfg-sens-bordes', 'cfg-sens-bordes-val'],
+-      canny_bajo: ['cfg-sens-canny-bajo', 'cfg-sens-canny-bajo-val'],
+-      canny_alto: ['cfg-sens-canny-alto', 'cfg-sens-canny-alto-val']
+-    };
+-    Object.entries(mapa).forEach(([clave, ids]) => {
+-      const input = el(ids[0]);
+-      const span = el(ids[1]);
+-      if (input) input.value = cam.sensibilidad[clave];
+-      if (span) span.textContent = cam.sensibilidad[clave];
+-    });
+-  }
+-
+-  window.camSetSensibilidad = function camSetSensibilidad(clave, valor) {
+-    const ids = {
+-      umbral_brillo: 'cfg-sens-brillo-val',
+-      umbral_bordes: 'cfg-sens-bordes-val',
+-      canny_bajo: 'cfg-sens-canny-bajo-val',
+-      canny_alto: 'cfg-sens-canny-alto-val'
+-    };
+-    cam.sensibilidad[clave] = Number(valor);
+-    setTexto(ids[clave], valor);
+-    guardarSensibilidadLocal();
+-    detectarOcupacionCliente();
+-  };
+-
+-  window.capturarCamaraMonitor = function capturarCamaraMonitor() {
+-    const img = el('cam-live-img');
+-    if (!img || !img.src || !cam.cameraOnline) {
+-      toast('warning', 'Aún no hay imagen de la ESP32-CAM.', 'fa-camera');
+-      return;
+-    }
+-    const w = window.open('', '_blank');
+-    if (w) {
+-      w.document.write(`<title>Captura ESP32-CAM</title><img src="${img.src}" style="max-width:100%;height:auto">`);
+-      w.document.close();
+-    }
+-  };
+-
+-  function inicializarCamaraMonitor() {
+-    cargarZonasDesdeLocal();
+-    cargarBackground();
+-
+-    const inputCam = el('cfg-ip-camara');
+-    const inputServer = el('cfg-ip-servidor');
+-    if (inputCam) inputCam.value = wsHostDesdeUrl(cam.serverUrl || getDefaultWsUrl());
+-    if (inputServer) inputServer.value = cam.serverUrl || getDefaultWsUrl();
+-
+-    const img = el('cam-live-img');
+-    if (img) {
+-      img.onload = () => {
+-        ajustarOverlay();
+-        detectarOcupacionCliente();
+-      };
+-      img.onerror = () => {
+-        setEstadoCamara('offline', 'Error de imagen');
+-        const empty = el('cam-empty-state');
+-        if (empty) empty.style.display = 'flex';
+-      };
+-    }
+-
+-    const canvas = el('cam-overlay-canvas');
+-    if (canvas) {
+-      canvas.addEventListener('click', (evento) => {
+-        if (cam.mode !== 'prueba') return;
+-        const imgLive = el('cam-live-img');
+-        if (!imgLive || !imgLive.naturalWidth) return;
+-        const punto = puntoPantallaAReal(evento);
+-
+-        if (!cam.modoNuevaZona) {
+-          const zona = cam.zonas.find((z) => z.puntos && puntoDentroPoligono(punto, z.puntos));
+-          if (zona) abrirModalZona(zona.nombre);
+-          return;
+-        }
+-
+-        cam.puntosActuales.push(punto);
+-        redibujarZonas();
+-
+-        if (cam.puntosActuales.length === 4) {
+-          const nombre = cam.numeroPendiente || String(cam.zonas.length + 1);
+-          cam.zonas.push({ nombre, puntos: cam.puntosActuales, ocupada: false, diff: 0 });
+-          cam.ocupacion[String(nombre)] = false;
+-          cam.puntosActuales = [];
+-          cam.modoNuevaZona = false;
+-          cam.numeroPendiente = null;
+-          const btn = el('btn-cam-nueva-zona');
+-          if (btn) btn.classList.remove('active');
+-          setTexto('cam-toolbar-hint', 'Zona creada. Guarda y recalibra con el estacionamiento vacío.');
+-          guardarZonasLocal();
+-          redibujarZonas();
+-          window.renderMonitorParkingStrip();
+-          abrirModalZona(nombre);
+-        }
+-      });
+-    }
+-
+-    window.setCamMode(cam.mode);
+-    window.renderMonitorParkingStrip();
+-    cargarSensibilidadCamara();
+-    actualizarResumenCamara();
+-    setTexto('monitor-camera-address', wsHostDesdeUrl(cam.serverUrl || getDefaultWsUrl()));
+-
+-    // Se conecta solo al visor WSS. Si la ESP32-CAM no está encendida,
+-    // quedará esperando hasta que el dispositivo se conecte a Railway.
+-    abrirWsCamara();
+-  }
+-
+-  document.addEventListener('DOMContentLoaded', inicializarCamaraMonitor);
+-})();
+diff --git a/public/assets/js/iot.js b/public/assets/js/iot.js
+index f7b4ba2..4412723 100644
+--- a/public/assets/js/iot.js
++++ b/public/assets/js/iot.js
+@@ -1,11 +1,61 @@
+ import { apiFetch, leerJson } from "./api.js";
+ 
++const TIPOS_IOT_OCULTOS = new Set([
++  "ESP32-CAM",
++  "OLED",
++  "Puntero laser",
++  "LDR",
++  "Potenciometro"
++]);
++
++const CODIGOS_IOT_OCULTOS = new Set([
++  "SERVO-SALIDA",
++  "OLED-ENTRADA",
++  "OLED-SALIDA",
++  "LDR-SALIDA",
++  "LASER-SALIDA",
++  "ESP32-CAM-01"
++]);
++
+ function badge(estado) {
+   if (estado === "Online") return "online";
+   if (estado === "Advertencia") return "warn";
++  if (estado === "Mantenimiento") return "warn";
+   return "offline";
+ }
+ 
++function debeOcultarDispositivo(dispositivo) {
++  return TIPOS_IOT_OCULTOS.has(dispositivo.tipoDispositivo) ||
++    CODIGOS_IOT_OCULTOS.has(dispositivo.codigo);
++}
++
++function calcularResumenVisible(dispositivos) {
++  const resumen = {
++    total: dispositivos.length,
++    online: 0,
++    offline: 0,
++    latencia: 0
++  };
++
++  let lecturasLatencia = 0;
++
++  dispositivos.forEach((dispositivo) => {
++    if (dispositivo.estado === "Online") resumen.online += 1;
++    else resumen.offline += 1;
++
++    if (Number(dispositivo.latenciaMs) > 0) {
++      resumen.latencia += Number(dispositivo.latenciaMs);
++      lecturasLatencia += 1;
++    }
++  });
++
++  resumen.latencia = lecturasLatencia > 0
++    ? Math.round(resumen.latencia / lecturasLatencia)
++    : 0;
++
++  return resumen;
++}
++
+ export async function cargarIot() {
+   const [rResumen, rDispositivos, rLogs] = await Promise.all([
+     apiFetch("/api/v2/iot/resumen"),
+@@ -21,14 +71,16 @@ export async function cargarIot() {
+   if (!rDispositivos.ok || !dispositivos.ok) throw new Error(dispositivos.mensaje || "No se pudieron cargar dispositivos");
+   if (!rLogs.ok || !logs.ok) throw new Error(logs.mensaje || "No se pudieron cargar logs");
+ 
+-  const r = resumen.resumen;
+-  document.getElementById("iot-total").textContent = r.totalDispositivos;
+-  document.getElementById("iot-online").textContent = r.dispositivosOnline;
+-  document.getElementById("iot-offline").textContent = r.dispositivosOffline;
+-  document.getElementById("iot-latency").textContent = `${r.latenciaPromedioMs} ms`;
++  const dispositivosVisibles = dispositivos.dispositivos.filter((dispositivo) => !debeOcultarDispositivo(dispositivo));
++  const r = calcularResumenVisible(dispositivosVisibles);
++
++  document.getElementById("iot-total").textContent = r.total;
++  document.getElementById("iot-online").textContent = r.online;
++  document.getElementById("iot-offline").textContent = r.offline;
++  document.getElementById("iot-latency").textContent = `${r.latencia} ms`;
+ 
+   const grid = document.getElementById("devices-grid");
+-  grid.innerHTML = dispositivos.dispositivos.length ? dispositivos.dispositivos.map((d) => `
++  grid.innerHTML = dispositivosVisibles.length ? dispositivosVisibles.map((d) => `
+     <article class="device-card">
+       <div class="device-head"><div><strong>${d.nombre}</strong><span>${d.codigo} · ${d.tipoDispositivo}</span></div><span class="status-badge ${badge(d.estado)}">${d.estado}</span></div>
+       <div class="device-meta">
+diff --git a/public/assets/js/panel-iot.js b/public/assets/js/panel-iot.js
+index 0247ec2..f7076b0 100644
+--- a/public/assets/js/panel-iot.js
++++ b/public/assets/js/panel-iot.js
+@@ -5,8 +5,7 @@ import { cargarIot } from "./iot.js";
+ import {
+   inicializarSensoresEnVivo,
+   activarSensoresEnVivo,
+-  detenerSensoresEnVivo,
+-  aplicarCamaraGuardada
++  detenerSensoresEnVivo
+ } from "./sensors-live.js";
+ 
+ const loginScreen = document.getElementById("login-screen");
+@@ -58,6 +57,13 @@ function mostrarLogin() {
+   detenerSensoresEnVivo();
+ 
+   if (isEmbed && window.parent !== window) {
++    // En modo embebido no debe mostrarse otro formulario de inicio de sesión.
++    // El login válido es únicamente el de la página principal.
++    loginScreen.hidden = true;
++    loginScreen.style.display = "none";
++    appShell.hidden = false;
++    configurarModoEmbed();
++
+     window.parent.postMessage({
+       type: "smartparking:session-expired"
+     }, window.location.origin);
+@@ -173,7 +179,6 @@ setInterval(() => {
+   if (embedPage === "sensors") {
+     activarSensoresEnVivo();
+     await actualizarIot();
+-    aplicarCamaraGuardada();
+   } else {
+     await actualizarDashboard();
+   }
+diff --git a/public/assets/js/sensors-live.js b/public/assets/js/sensors-live.js
+index 229e716..8d00161 100644
+--- a/public/assets/js/sensors-live.js
++++ b/public/assets/js/sensors-live.js
+@@ -1,7 +1,6 @@
+ const STORAGE_WS_URL = "smartParkingEsp32WsUrl";
+-const STORAGE_CAMERA_URL = "smartParkingEsp32CameraUrl";
++const STORAGE_SIM_DATE = "smartParkingOperationDate";
+ const MAX_LOGS = 150;
+-const SIM_SPEED_MAX = 1440;
+ 
+ const state = {
+   initialized: false,
+@@ -10,22 +9,16 @@ const state = {
+   reconnectTimer: null,
+   reconnectEnabled: true,
+   mode: "test",
+-  servoEntrada: null,
+-  servoSalida: null,
+-  laser: null,
+-  ldr: null,
+-  pot: null,
++  servoAcceso: null,
+   uid: null,
+   lastReader: null,
+   rfidReads: 0,
+-  rfidEntrada: 0,
+-  rfidSalida: 0,
++  rfidAcceso: 0,
++  rfidPago: 0,
+   writeWaiting: false,
+   logs: [],
+   autoScroll: true,
+-  simTime: new Date(),
+-  simSpeed: 1,
+-  lastSimTick: Date.now(),
++  operationDate: obtenerFechaHoyISO(),
+   clockTimer: null
+ };
+ 
+@@ -33,6 +26,12 @@ function el(id) {
+   return document.getElementById(id);
+ }
+ 
++function obtenerFechaHoyISO() {
++  const now = new Date();
++  const offset = now.getTimezoneOffset() * 60000;
++  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
++}
++
+ function obtenerGatewayWsUrl() {
+   const protocolo = window.location.protocol === "https:" ? "wss:" : "ws:";
+   return `${protocolo}//${window.location.host}/iot-ws?client=panel`;
+@@ -58,6 +57,7 @@ function normalizarWsUrl(valor) {
+ function aplicarTema(theme, accent) {
+   const tema = theme === "light" ? "light" : "dark";
+   document.documentElement.setAttribute("data-theme", tema);
++  document.body?.setAttribute("data-theme", tema);
+   if (accent) document.documentElement.style.setProperty("--accent", accent);
+ }
+ 
+@@ -67,24 +67,24 @@ window.addEventListener("message", (evento) => {
+   if (data.type === "smartparking:theme") aplicarTema(data.theme, data.accent);
+ });
+ 
+-function updateRfidConnectionIndicators(entrada = state.rfidEntrada, salida = state.rfidSalida) {
+-  state.rfidEntrada = Number(entrada) === 1 ? 1 : 0;
+-  state.rfidSalida = Number(salida) === 1 ? 1 : 0;
++function updateRfidConnectionIndicators(acceso = state.rfidAcceso, pago = state.rfidPago) {
++  state.rfidAcceso = Number(acceso) === 1 ? 1 : 0;
++  state.rfidPago = Number(pago) === 1 ? 1 : 0;
+ 
+-  const entryDot = el("rfid-entry-status-dot") || el("rfid-status-dot");
+-  const entryText = el("rfid-entry-status-text") || el("rfid-status-text");
+-  const exitDot = el("rfid-exit-status-dot");
+-  const exitText = el("rfid-exit-status-text");
++  const accessDot = el("rfid-entry-status-dot") || el("rfid-status-dot");
++  const accessText = el("rfid-entry-status-text") || el("rfid-status-text");
++  const paymentDot = el("rfid-exit-status-dot");
++  const paymentText = el("rfid-exit-status-text");
+ 
+-  if (entryDot) entryDot.className = `sensor-pill ${state.rfidEntrada ? "ok" : "off"}`;
+-  if (entryText) entryText.textContent = state.rfidEntrada
+-    ? "Conectado · lectura/escritura activa"
+-    : "Sin conexión al lector de entrada";
++  if (accessDot) accessDot.className = `sensor-pill ${state.rfidAcceso ? "ok" : "off"}`;
++  if (accessText) accessText.textContent = state.rfidAcceso
++    ? "Conectado · entrada/salida activa"
++    : "Sin conexión al RFID de acceso";
+ 
+-  if (exitDot) exitDot.className = `sensor-pill ${state.rfidSalida ? "ok" : "off"}`;
+-  if (exitText) exitText.textContent = state.rfidSalida
+-    ? "Conectado · cobro activo"
+-    : "Sin conexión al lector de salida";
++  if (paymentDot) paymentDot.className = `sensor-pill ${state.rfidPago ? "ok" : "off"}`;
++  if (paymentText) paymentText.textContent = state.rfidPago
++    ? "Conectado · pago activo"
++    : "Sin conexión al RFID de pago";
+ }
+ 
+ function setConnectionStatus(status, detail = "") {
+@@ -203,7 +203,7 @@ function conectarESP32(manual = true) {
+   localStorage.setItem(STORAGE_WS_URL, url);
+ 
+   if (window.location.protocol === "https:" && url.startsWith("ws://")) {
+-    const detail = "El navegador bloquea ws:// desde una página HTTPS. Usa la prueba local o un WebSocket wss://.";
++    const detail = "El navegador bloquea ws:// desde una página HTTPS. Usa wss://.";
+     setConnectionStatus("offline", detail);
+     addLog("error", "WS", detail);
+     state.reconnectEnabled = false;
+@@ -230,6 +230,7 @@ function conectarESP32(manual = true) {
+     setConnectionStatus("connected", url);
+     addLog("ok", "WS", "Conexión establecida. Esperando datos reales del ESP32.");
+     wsSend({ cmd: "mode", mode: state.mode }, false);
++    enviarFechaOperacion(false);
+   };
+ 
+   socket.onmessage = (event) => {
+@@ -268,7 +269,6 @@ function wsSend(payload, logWhenDisconnected = true) {
+ 
+ function updateServo(id, angle) {
+   const numericAngle = Number(angle);
+-  const isEntry = id === "entry";
+   const open = numericAngle === 90;
+   const arc = el(`servo-${id}-arc`);
+   const angleLabel = el(`servo-${id}-angle`);
+@@ -294,90 +294,10 @@ function updateServo(id, angle) {
+       ? '<i class="ti ti-lock"></i> Cerrar'
+       : '<i class="ti ti-lock-open"></i> Abrir';
+     button.dataset.open = open ? "true" : "false";
+-    button.dataset.closedAngle = isEntry ? "0" : "180";
++    button.dataset.closedAngle = "0";
+   }
+ }
+ 
+-function updateLaser(value) {
+-  const on = Number(value) === 1;
+-  const label = el("laser-value");
+-  const detail = el("laser-detail");
+-  const dot = el("laser-dot");
+-  const button = el("btn-laser");
+-
+-  if (label) {
+-    label.textContent = on ? "ENCENDIDO" : "APAGADO";
+-    label.style.color = on ? "var(--red)" : "var(--muted)";
+-  }
+-  if (detail) detail.textContent = on ? "Haz activo" : "Sin emisión";
+-  if (dot) dot.className = `sensor-pill ${on ? "on" : "off"}`;
+-  if (button) {
+-    button.classList.toggle("on", on);
+-    button.dataset.on = on ? "true" : "false";
+-    button.innerHTML = on
+-      ? '<i class="ti ti-power"></i> Apagar láser'
+-      : '<i class="ti ti-power"></i> Encender láser';
+-  }
+-}
+-
+-function updateLdr(value) {
+-  const free = Number(value) === 1;
+-  const label = el("ldr-value");
+-  const detail = el("ldr-detail");
+-  const dot = el("ldr-dot");
+-
+-  if (label) {
+-    label.textContent = free ? "LIBRE" : "BLOQUEADO";
+-    label.style.color = free ? "var(--green)" : "var(--red)";
+-  }
+-  if (detail) detail.textContent = free ? "Paso libre detectado" : "Obstáculo u oscuridad";
+-  if (dot) dot.className = `sensor-pill ${free ? "ok" : "on"}`;
+-}
+-
+-function formatSpeed(speed) {
+-  const value = Number(speed) || 1;
+-  if (value < 2) return "x1";
+-  if (value < 10) return `x${value.toFixed(1)}`;
+-  return `x${Math.round(value)}`;
+-}
+-
+-function describeSpeed(speed) {
+-  const value = Number(speed) || 1;
+-  if (value < 1.5) return "Tiempo real";
+-  if (value >= SIM_SPEED_MAX - 2) return "1 min real = 1 día simulado";
+-
+-  const simulatedMinutes = value;
+-  if (simulatedMinutes >= 60) {
+-    return `1 min real = ${(simulatedMinutes / 60).toFixed(1)} h simuladas`;
+-  }
+-
+-  return `1 min real = ${Math.round(simulatedMinutes)} min simulados`;
+-}
+-
+-function updatePot(rawValue, speedFromDevice) {
+-  const raw = Math.max(0, Math.min(4095, Number(rawValue) || 0));
+-  const percentage = raw / 4095;
+-  const speed = Number(speedFromDevice) > 0
+-    ? Number(speedFromDevice)
+-    : 1 + percentage * (SIM_SPEED_MAX - 1);
+-  const offset = 132 - percentage * 132;
+-  const speedText = formatSpeed(speed);
+-
+-  const arc = el("pwm-arc");
+-  if (arc) {
+-    arc.style.strokeDashoffset = offset.toFixed(1);
+-    arc.style.stroke = "var(--accent)";
+-  }
+-
+-  if (el("pwm-val")) el("pwm-val").textContent = speedText;
+-  if (el("pwm-sub")) el("pwm-sub").innerHTML = `ADC: ${raw} / 4095<br>${describeSpeed(speed)}`;
+-  if (el("sim-speed-badge")) el("sim-speed-badge").textContent = speedText;
+-  if (el("sim-speed-desc")) el("sim-speed-desc").textContent = describeSpeed(speed);
+-  if (el("sim-speed-bar")) el("sim-speed-bar").style.width = `${(percentage * 100).toFixed(1)}%`;
+-
+-  state.simSpeed = speed;
+-}
+-
+ function addDataRow(container, key, value, className = "") {
+   const row = document.createElement("div");
+   row.className = "rfid-data-row";
+@@ -393,15 +313,23 @@ function addDataRow(container, key, value, className = "") {
+   container.appendChild(row);
+ }
+ 
++function nombreLector(reader = "") {
++  const value = String(reader).toLowerCase();
++  if (["acceso", "entrada", "salida", "entrada_salida"].includes(value)) return "Acceso / entrada-salida";
++  if (["pago", "payment", "cobro"].includes(value)) return "Pago";
++  return "No indicado";
++}
++
+ function renderRfid(uid, cardData, reader = "") {
+   const container = el("rfid-result");
+   if (!container) return;
+ 
+   container.className = "";
+   container.replaceChildren();
+-  addDataRow(container, "Lector", reader === "salida" ? "Salida / pago" : reader === "entrada" ? "Entrada / registro" : "No indicado");
++  addDataRow(container, "Lector", nombreLector(reader));
+   addDataRow(container, "UID", uid, "uid");
+   addDataRow(container, "Hora", new Date().toLocaleTimeString("es-PE", { hour12: false }));
++  addDataRow(container, "Fecha operación", state.operationDate);
+ 
+   if (cardData?.hasData) {
+     addDataRow(container, "Carro", cardData.carro || "—");
+@@ -412,7 +340,7 @@ function renderRfid(uid, cardData, reader = "") {
+     addDataRow(container, "DNI", cardData.dni || "—");
+     addDataRow(container, "Teléfono", cardData.telefono || "—");
+     addDataRow(container, "Saldo", `S/ ${cardData.saldo || "0.00"}`);
+-    addDataRow(container, "Ingreso sim.", cardData.ingresoMin ? `min ${cardData.ingresoMin}` : "Sin ingreso activo");
++    addDataRow(container, "Estado", cardData.estadoSesion || cardData.estado || "Sin estado");
+   } else {
+     addDataRow(container, "Datos", "Tarjeta sin información grabada");
+   }
+@@ -437,8 +365,8 @@ function handleWriteStatus(data) {
+     state.writeWaiting = true;
+     button.disabled = true;
+     cancel.hidden = false;
+-    setWriteStatus("Esperando tarjeta… acércala al RFID de entrada, no al de salida.", "info");
+-    addLog("info", "RFID", "Modo escritura activado en lector de entrada.");
++    setWriteStatus("Esperando tarjeta… acércala al RFID de pago.", "info");
++    addLog("info", "RFID", "Modo escritura activado en lector de pago.");
+   } else if (data.writeStatus === "success") {
+     state.writeWaiting = false;
+     button.disabled = false;
+@@ -449,11 +377,11 @@ function handleWriteStatus(data) {
+     state.writeWaiting = false;
+     button.disabled = false;
+     cancel.hidden = true;
+-    setWriteStatus("No se pudo escribir la tarjeta. Verifica que sea compatible y vuelve a intentar.", "error");
+-    addLog("error", "RFID", "Fallo durante la escritura de la tarjeta.");
++    setWriteStatus(data.message || "No se pudo escribir la tarjeta. Verifica que sea compatible y vuelve a intentar.", "error");
++    addLog("error", "RFID", data.message || "Fallo durante la escritura de la tarjeta.");
+   } else if (data.writeStatus === "wrong_reader") {
+-    setWriteStatus("La tarjeta se acercó al lector de salida. Para registrar datos, usa el RFID de entrada.", "error");
+-    addLog("warn", "RFID", "Escritura rechazada porque se usó el lector de salida.");
++    setWriteStatus("Usa el RFID de pago para escribir o actualizar tarjetas.", "error");
++    addLog("warn", "RFID", "Escritura rechazada por lector incorrecto.");
+   } else if (data.writeStatus === "cancelled") {
+     state.writeWaiting = false;
+     button.disabled = false;
+@@ -463,15 +391,24 @@ function handleWriteStatus(data) {
+   }
+ }
+ 
+-function handleEntryStatus(data) {
+-  if (data.entryStatus === "success") {
+-    addLog("ok", "ENTRADA", data.message || "Ingreso registrado y barrera abierta.");
+-  } else if (data.entryStatus === "error") {
+-    addLog("error", "ENTRADA", data.message || "No se pudo procesar la entrada.");
+-  }
++function handleAccessStatus(data) {
++  const status = data.accessStatus ?? data.entryStatus ?? data.exitStatus;
++  if (!status) return;
++
++  const tag = data.exitStatus !== undefined ? "SALIDA" : data.entryStatus !== undefined ? "ENTRADA" : "ACCESO";
++  const ok = status === "success" || status === "ok" || status === true;
++  addLog(ok ? "ok" : "error", tag, data.message || (ok ? "Acceso autorizado." : "Acceso rechazado."));
++}
++
++function handleIncidentStatus(data) {
++  const status = data.incidentStatus ?? data.incidenciaStatus;
++  if (!status) return;
++  addLog("error", "INCIDENCIA", data.message || "Incidencia registrada para reportes.");
+ }
+ 
+ function handlePaymentStatus(data) {
++  if (data.paymentStatus === undefined) return;
++
+   const base = data.message || (data.paymentStatus === "success" ? "Pago aplicado." : "Pago rechazado.");
+   const extra = data.paymentStatus === "success"
+     ? ` Pago: S/ ${Number(data.pago || 0).toFixed(2)} · Nuevo saldo: S/ ${Number(data.saldoNuevo || 0).toFixed(2)}`
+@@ -479,7 +416,7 @@ function handlePaymentStatus(data) {
+       ? ` Pago requerido: S/ ${Number(data.pago || 0).toFixed(2)}`
+       : "";
+ 
+-  addLog(data.paymentStatus === "success" ? "ok" : "error", "SALIDA", `${base}${extra}`);
++  addLog(data.paymentStatus === "success" ? "ok" : "error", "PAGO", `${base}${extra}`);
+ }
+ 
+ function syncModeFromDevice(mode) {
+@@ -492,54 +429,42 @@ function handleState(data) {
+   if (data.gateway === true) return;
+ 
+   if (data.writeStatus !== undefined) handleWriteStatus(data);
+-  if (data.entryStatus !== undefined) handleEntryStatus(data);
+-  if (data.paymentStatus !== undefined) handlePaymentStatus(data);
++  handleAccessStatus(data);
++  handleIncidentStatus(data);
++  handlePaymentStatus(data);
+   if (data.cmdStatus === "blocked") addLog("warn", "MODO", data.message || "Comando bloqueado.");
+   if (data.mode !== undefined) syncModeFromDevice(data.mode);
++  if (data.fechaOperacion || data.operationDate) aplicarFechaOperacion(data.fechaOperacion || data.operationDate, false);
+ 
+-  if (data.rfidEntrada !== undefined || data.rfidSalida !== undefined) {
+-    updateRfidConnectionIndicators(data.rfidEntrada ?? state.rfidEntrada, data.rfidSalida ?? state.rfidSalida);
++  if (
++    data.rfidAcceso !== undefined ||
++    data.rfidPago !== undefined ||
++    data.rfidEntrada !== undefined ||
++    data.rfidSalida !== undefined
++  ) {
++    updateRfidConnectionIndicators(
++      data.rfidAcceso ?? data.rfidEntrada ?? state.rfidAcceso,
++      data.rfidPago ?? data.rfidSalida ?? state.rfidPago
++    );
+   }
+ 
+-  if (data.servoEntrada !== undefined && Number(data.servoEntrada) !== state.servoEntrada) {
+-    state.servoEntrada = Number(data.servoEntrada);
+-    updateServo("entry", state.servoEntrada);
+-    addLog("ok", "SERVO", `Entrada: ${state.servoEntrada}°`);
+-  }
+-
+-  if (data.servoSalida !== undefined && Number(data.servoSalida) !== state.servoSalida) {
+-    state.servoSalida = Number(data.servoSalida);
+-    updateServo("exit", state.servoSalida);
+-    addLog("ok", "SERVO", `Salida: ${state.servoSalida}°`);
+-  }
+-
+-  if (data.laser !== undefined && Number(data.laser) !== state.laser) {
+-    state.laser = Number(data.laser);
+-    updateLaser(state.laser);
+-    addLog(state.laser ? "ok" : "warn", "LÁSER", state.laser ? "Encendido" : "Apagado");
+-  }
+-
+-  if (data.ldr !== undefined && Number(data.ldr) !== state.ldr) {
+-    state.ldr = Number(data.ldr);
+-    updateLdr(state.ldr);
+-    addLog(state.ldr ? "info" : "warn", "LDR", state.ldr ? "Paso libre" : "Obstáculo detectado");
+-  }
+-
+-  if (data.pot !== undefined) {
+-    state.pot = Number(data.pot);
+-    updatePot(state.pot, data.simSpeed);
++  const servoValue = data.servoAcceso ?? data.servoEntrada;
++  if (servoValue !== undefined && Number(servoValue) !== state.servoAcceso) {
++    state.servoAcceso = Number(servoValue);
++    updateServo("entry", state.servoAcceso);
++    addLog("ok", "SERVO", `Acceso: ${state.servoAcceso}°`);
+   }
+ 
+   if (data.uid !== undefined && data.uid && data.uid !== "----") {
+     const incomingUid = String(data.uid);
+-    const incomingReader = String(data.lastReader || "");
++    const incomingReader = String(data.lastReader || data.reader || "");
+     const uniqueRead = incomingUid !== state.uid || incomingReader !== state.lastReader;
+     if (uniqueRead) {
+       state.uid = incomingUid;
+       state.lastReader = incomingReader;
+       state.rfidReads += 1;
+       renderRfid(state.uid, data.cardData, incomingReader);
+-      addLog("ok", "RFID", `Tarjeta detectada en ${incomingReader || "lector"} · ${state.uid}`);
++      addLog("ok", "RFID", `Tarjeta detectada en ${nombreLector(incomingReader)} · ${state.uid}`);
+     }
+   }
+ }
+@@ -558,14 +483,14 @@ function setMode(mode, notifyDevice = true) {
+   liveButton?.classList.toggle("active-live", live);
+ 
+   if (subtitle) subtitle.textContent = live
+-    ? "Funcionamiento — RFID de entrada registra ingreso y RFID de salida descuenta saldo"
+-    : "Modo prueba — controles manuales habilitados";
++    ? "Funcionamiento — acceso valida entrada/salida y pago queda separado"
++    : "Modo prueba — control manual de la barrera habilitado";
+ 
+   if (banner) {
+     banner.className = `mode-banner ${live ? "live" : "test"}`;
+     banner.innerHTML = live
+-      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: la entrada escribe el ingreso; la salida cobra, actualiza saldo y abre la barrera si el saldo alcanza.</span>'
+-      : '<i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span>';
++      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: RFID de acceso permite entrar o salir; RFID de pago descuenta saldo. Los intentos de salida sin pago quedan como incidencia.</span>'
++      : '<i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes abrir o cerrar manualmente la barrera única de acceso.</span>';
+   }
+ 
+   if (notifyDevice) {
+@@ -574,32 +499,18 @@ function setMode(mode, notifyDevice = true) {
+   }
+ }
+ 
+-function toggleServo(id) {
++function toggleServo() {
+   if (state.mode !== "test") {
+     addLog("warn", "MODO", "Control manual bloqueado en modo funcionamiento.");
+     return;
+   }
+ 
+-  const isEntry = id === "entry";
+-  const current = isEntry ? state.servoEntrada : state.servoSalida;
++  const current = state.servoAcceso;
+   const open = current === 90;
+-  const angle = open ? (isEntry ? 0 : 180) : 90;
+-  const firmwareId = isEntry ? "entrada" : "salida";
+-
+-  if (wsSend({ cmd: "servo", id: firmwareId, angle })) {
+-    addLog("info", "CMD", `Servo ${firmwareId} → ${angle}°`);
+-  }
+-}
+-
+-function toggleLaser() {
+-  if (state.mode !== "test") {
+-    addLog("warn", "MODO", "Control manual bloqueado en modo funcionamiento.");
+-    return;
+-  }
++  const angle = open ? 0 : 90;
+ 
+-  const value = state.laser === 1 ? 0 : 1;
+-  if (wsSend({ cmd: "laser", value })) {
+-    addLog("info", "CMD", `Láser → ${value ? "ON" : "OFF"}`);
++  if (wsSend({ cmd: "servo", id: "acceso", angle })) {
++    addLog("info", "CMD", `Servo acceso → ${angle}°`);
+   }
+ }
+ 
+@@ -612,6 +523,7 @@ function sendWriteCard() {
+ 
+   const payload = {
+     cmd: "writeCard",
++    reader: "pago",
+     carro: el("rfid-car")?.value.trim() || "",
+     marca: el("rfid-brand")?.value.trim() || "",
+     placa: (el("rfid-plate")?.value.trim() || "").toUpperCase(),
+@@ -622,88 +534,52 @@ function sendWriteCard() {
+     tipoCarro: el("rfid-type")?.value || "Sedan"
+   };
+ 
+-  const hasData = Object.entries(payload).some(([key, value]) => key !== "cmd" && String(value).trim());
++  const hasData = Object.entries(payload).some(([key, value]) => !["cmd", "reader"].includes(key) && String(value).trim());
+   if (!hasData) {
+     setWriteStatus("Completa al menos un campo antes de escribir.", "error");
+     return;
+   }
+ 
+   if (wsSend(payload)) {
+-    setWriteStatus("Solicitud enviada. Acerca la tarjeta al RFID de entrada…", "info");
+-    addLog("info", "RFID", `Datos enviados para escritura en entrada${payload.placa ? ` · ${payload.placa}` : ""}.`);
++    setWriteStatus("Solicitud enviada. Acerca la tarjeta al RFID de pago…", "info");
++    addLog("info", "RFID", `Datos enviados para escritura en pago${payload.placa ? ` · ${payload.placa}` : ""}.`);
+   }
+ }
+ 
+-function applyCameraUrl(urlValue, announce = true) {
+-  const input = el("esp32-camera-url");
+-  const image = el("camera-stream");
+-  const panel = el("camera-panel");
+-  const empty = el("camera-empty");
+-  const status = el("camera-status");
+-  const subtitle = el("camera-subtitle");
+-  const device = el("camera-device");
++function aplicarFechaOperacion(fecha, notifyDevice = true) {
++  const valor = /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ""))
++    ? String(fecha)
++    : obtenerFechaHoyISO();
+ 
+-  const url = String(urlValue ?? input?.value ?? "").trim();
+-  if (input) input.value = url;
+-  localStorage.setItem(STORAGE_CAMERA_URL, url);
+-
+-  if (!image || !panel || !empty || !status) {
+-    if (announce) addLog("info", "CÁMARA", url ? "URL de cámara guardada para Monitoreo en Tiempo Real." : "URL de cámara eliminada.");
+-    return;
+-  }
++  state.operationDate = valor;
++  localStorage.setItem(STORAGE_SIM_DATE, valor);
+ 
+-  image.onload = null;
+-  image.onerror = null;
+-
+-  if (!url) {
+-    image.hidden = true;
+-    image.removeAttribute("src");
+-    panel.classList.remove("has-stream", "stream-error");
+-    status.textContent = "No configurada";
+-    status.className = "status-badge neutral";
+-    if (subtitle) subtitle.textContent = "Configura la URL desde Sensores en vivo";
+-    if (device) device.textContent = "ESP32-CAM";
+-    if (announce) addLog("info", "CÁMARA", "URL de transmisión eliminada.");
+-    return;
+-  }
+-
+-  status.textContent = "Conectando";
+-  status.className = "status-badge warn";
+-  if (subtitle) subtitle.textContent = "Intentando abrir transmisión real…";
+-  if (device) device.textContent = url;
+-
+-  image.onload = () => {
+-    image.hidden = false;
+-    panel.classList.add("has-stream");
+-    panel.classList.remove("stream-error");
+-    status.textContent = "Online";
+-    status.className = "status-badge online";
+-    if (subtitle) subtitle.textContent = "Transmisión en vivo configurada";
+-    if (el("camera-reading")) el("camera-reading").textContent = `Última lectura: ${new Date().toLocaleTimeString("es-PE")}`;
+-    if (announce) addLog("ok", "CÁMARA", "Transmisión cargada correctamente.");
+-  };
++  const input = el("sim-date-input");
++  if (input && input.value !== valor) input.value = valor;
+ 
+-  image.onerror = () => {
+-    image.hidden = true;
+-    panel.classList.remove("has-stream");
+-    panel.classList.add("stream-error");
+-    status.textContent = "Sin señal";
+-    status.className = "status-badge offline";
+-    if (subtitle) subtitle.textContent = "No se pudo abrir la URL configurada";
+-    if (announce) addLog("error", "CÁMARA", "No se pudo cargar la transmisión.");
+-  };
++  tickSimulationClock();
++  if (notifyDevice) enviarFechaOperacion(true);
++}
+ 
+-  image.src = `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
++function enviarFechaOperacion(log = true) {
++  const enviado = wsSend({ cmd: "simulationDate", date: state.operationDate }, false);
++  if (enviado && log) addLog("info", "FECHA", `Fecha de operación: ${state.operationDate}`);
+ }
+ 
+ function tickSimulationClock() {
+-  const now = Date.now();
+-  const elapsed = now - state.lastSimTick;
+-  state.lastSimTick = now;
+-  state.simTime = new Date(state.simTime.getTime() + elapsed * state.simSpeed);
+-
+-  const time = state.simTime.toLocaleTimeString("es-PE", { hour12: false });
+-  const date = state.simTime.toLocaleDateString("es-PE", {
++  const ahora = new Date();
++  const [year, month, day] = state.operationDate.split("-").map(Number);
++  const fechaOperacion = new Date(
++    year,
++    month - 1,
++    day,
++    ahora.getHours(),
++    ahora.getMinutes(),
++    ahora.getSeconds()
++  );
++
++  const time = fechaOperacion.toLocaleTimeString("es-PE", { hour12: false });
++  const date = fechaOperacion.toLocaleDateString("es-PE", {
+     weekday: "short",
+     day: "2-digit",
+     month: "short",
+@@ -716,12 +592,9 @@ function tickSimulationClock() {
+ 
+ function bindEvents() {
+   el("btn-esp32-reconnect")?.addEventListener("click", () => conectarESP32(true));
+-  el("btn-camera-apply")?.addEventListener("click", () => applyCameraUrl(undefined, true));
+   el("mode-btn-test")?.addEventListener("click", () => setMode("test"));
+   el("mode-btn-live")?.addEventListener("click", () => setMode("live"));
+-  el("btn-servo-entry")?.addEventListener("click", () => toggleServo("entry"));
+-  el("btn-servo-exit")?.addEventListener("click", () => toggleServo("exit"));
+-  el("btn-laser")?.addEventListener("click", toggleLaser);
++  el("btn-servo-entry")?.addEventListener("click", toggleServo);
+   el("btn-rfid-write")?.addEventListener("click", sendWriteCard);
+   el("btn-rfid-cancel")?.addEventListener("click", () => wsSend({ cmd: "cancelWrite" }));
+   el("btn-log-clear")?.addEventListener("click", () => {
+@@ -742,6 +615,10 @@ function bindEvents() {
+     localStorage.setItem(STORAGE_WS_URL, event.target.value);
+   });
+ 
++  el("sim-date-input")?.addEventListener("change", (event) => {
++    aplicarFechaOperacion(event.target.value, true);
++  });
++
+   document.querySelectorAll(".rfid-tab").forEach((button) => {
+     button.addEventListener("click", () => {
+       document.querySelectorAll(".rfid-tab").forEach((item) => item.classList.remove("active"));
+@@ -757,7 +634,7 @@ export function inicializarSensoresEnVivo() {
+   state.initialized = true;
+ 
+   const storedWs = localStorage.getItem(STORAGE_WS_URL);
+-  const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL);
++  const storedDate = localStorage.getItem(STORAGE_SIM_DATE) || obtenerFechaHoyISO();
+ 
+   const wsInicial = window.location.protocol === "https:" && /^ws:\/\//i.test(storedWs || "")
+     ? ""
+@@ -768,15 +645,13 @@ export function inicializarSensoresEnVivo() {
+   if (el("esp32-ws-url")) el("esp32-ws-url").value = defaultWs;
+   localStorage.setItem(STORAGE_WS_URL, defaultWs);
+ 
+-  if (storedCamera && el("esp32-camera-url")) el("esp32-camera-url").value = storedCamera;
+-
+   bindEvents();
+   setMode("test", false);
+   setAutoScroll(true);
+   updateRfidConnectionIndicators(0, 0);
+-  applyCameraUrl(storedCamera || "", false);
++  aplicarFechaOperacion(storedDate, false);
+ 
+-  state.clockTimer = setInterval(tickSimulationClock, 100);
++  state.clockTimer = setInterval(tickSimulationClock, 1000);
+ }
+ 
+ export function activarSensoresEnVivo() {
+@@ -794,8 +669,3 @@ export function detenerSensoresEnVivo() {
+   closeSocket();
+   setConnectionStatus("offline", "Conexión detenida.");
+ }
+-
+-export function aplicarCamaraGuardada() {
+-  const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL) || "";
+-  applyCameraUrl(storedCamera, false);
+-}
+diff --git a/public/panel-iot.html b/public/panel-iot.html
+index 36b15e7..8e40610 100644
+--- a/public/panel-iot.html
++++ b/public/panel-iot.html
+@@ -84,11 +84,6 @@
+               <span>WebSocket del ESP32</span>
+               <input id="esp32-ws-url" type="text" value="" placeholder="Automático: wss://este-dominio/iot-ws?client=panel" spellcheck="false" autocomplete="off">
+             </label>
+-            <label class="sensor-config-field camera-url-field">
+-              <span>URL de ESP32-CAM</span>
+-              <input id="esp32-camera-url" type="text" placeholder="Ejemplo: http://192.168.4.2:81/stream" spellcheck="false" autocomplete="off">
+-            </label>
+-            <button id="btn-camera-apply" class="sensor-action-button"><i class="ti ti-camera"></i> Aplicar cámara</button>
+             <button id="btn-esp32-reconnect" class="sensor-action-button primary"><i class="ti ti-refresh"></i> Reconectar</button>
+           </section>
+ 
+@@ -104,7 +99,7 @@
+                   <button id="mode-btn-live" type="button"><i class="ti ti-player-play"></i> Funcionamiento</button>
+                 </div>
+               </section>
+-              <div id="mode-banner" class="mode-banner test"><i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span></div>
++              <div id="mode-banner" class="mode-banner test"><i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar manualmente la barrera de acceso.</span></div>
+ 
+               <section class="sensor-top-row">
+                 <article class="sensor-clock-card">
+@@ -114,31 +109,24 @@
+                     <small id="sim-date">---</small>
+                   </div>
+                   <div class="clock-speed-info">
+-                    <span>Velocidad según potenciómetro</span>
+-                    <strong id="sim-speed-badge">x1</strong>
+-                    <small id="sim-speed-desc">Sin datos</small>
+-                    <div class="speed-track"><span id="sim-speed-bar"></span></div>
++                    <span>Fecha de operación</span>
++                    <input id="sim-date-input" class="sim-date-input" type="date">
++                    <small id="sim-date-help">Las entradas, pagos e incidencias usarán esta fecha.</small>
+                   </div>
+                 </article>
+ 
+-                <article class="pwm-widget">
+-                  <div class="pwm-title">Potenciómetro <span class="gpio-tag">GPIO 32</span></div>
+-                  <div class="pwm-gauge-wrap">
+-                    <svg viewBox="0 0 110 70" aria-hidden="true">
+-                      <path class="gauge-bg" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132"/>
+-                      <path id="pwm-arc" class="gauge-fill" d="M 15 62 A 42 42 0 1 1 95 62" stroke-dasharray="132" stroke-dashoffset="132"/>
+-                    </svg>
+-                    <strong id="pwm-val">--</strong>
+-                  </div>
+-                  <small id="pwm-sub">ADC: -- / 4095<br>Sin datos</small>
++                <article class="operation-rate-widget">
++                  <div class="pwm-title">Simulación de cobro</div>
++                  <strong>S/ 1.00</strong>
++                  <small>por cada minuto real transcurrido dentro del estacionamiento.</small>
+                 </article>
+               </section>
+ 
+               <section class="sensor-group-card">
+-                <div class="sensor-group-title"><i class="ti ti-barrier-block"></i> Barreras de acceso, láser y LDR</div>
+-                <div class="barrier-grid">
+-                  <article class="servo-card">
+-                    <div class="servo-heading"><strong>Entrada</strong><span id="servo-entry-state" class="servo-state closed">SIN DATOS</span></div>
++                <div class="sensor-group-title"><i class="ti ti-barrier-block"></i> Barrera única de acceso</div>
++                <div class="barrier-grid single-barrier-grid">
++                  <article class="servo-card access-servo-card">
++                    <div class="servo-heading"><strong>Entrada / salida</strong><span id="servo-entry-state" class="servo-state closed">SIN DATOS</span></div>
+                     <div class="servo-gauge-wrap">
+                       <svg viewBox="0 0 96 86" aria-hidden="true">
+                         <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
+@@ -146,41 +134,30 @@
+                         <text id="servo-entry-angle" x="48" y="56" text-anchor="middle">--°</text>
+                       </svg>
+                     </div>
+-                    <span class="gpio-tag">Servo · GPIO 26</span>
++                    <span class="gpio-tag">Servo único · GPIO 26</span>
+                     <button id="btn-servo-entry" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
+                   </article>
+ 
+-                  <div class="center-sensors">
+-                    <article class="mini-sensor-card">
+-                      <div class="mini-sensor-icon laser"><i class="ti ti-laser-pointer"></i></div>
+-                      <div><span>Módulo láser</span><strong id="laser-value">SIN DATOS</strong><small id="laser-detail">Esperando ESP32…</small></div>
+-                      <span id="laser-dot" class="sensor-pill off"></span>
+-                    </article>
+-                    <button id="btn-laser" class="manual-control laser-button" type="button"><i class="ti ti-power"></i> Encender láser</button>
+-                    <article class="mini-sensor-card">
+-                      <div class="mini-sensor-icon ldr"><i class="ti ti-brightness"></i></div>
+-                      <div><span>Sensor LDR</span><strong id="ldr-value">SIN DATOS</strong><small id="ldr-detail">Esperando ESP32…</small><em class="gpio-tag">GPIO 13</em></div>
+-                      <span id="ldr-dot" class="sensor-pill off"></span>
+-                    </article>
+-                  </div>
++                  <article class="access-rule-card">
++                    <i class="ti ti-shield-check"></i>
++                    <div>
++                      <strong>Reglas del acceso</strong>
++                      <p>El lector de acceso registra entrada o salida. Si el vehículo ya está dentro, no puede volver a ingresar. Si intenta salir sin pago, se registra una incidencia.</p>
++                    </div>
++                  </article>
+ 
+-                  <article class="servo-card">
+-                    <div class="servo-heading"><strong>Salida</strong><span id="servo-exit-state" class="servo-state closed">SIN DATOS</span></div>
+-                    <div class="servo-gauge-wrap">
+-                      <svg viewBox="0 0 96 86" aria-hidden="true">
+-                        <path class="servo-gauge-bg" d="M 8 72 A 42 42 0 1 1 88 72"/>
+-                        <path id="servo-exit-arc" class="servo-gauge-value" d="M 8 72 A 42 42 0 1 1 88 72" stroke-dasharray="148" stroke-dashoffset="148"/>
+-                        <text id="servo-exit-angle" x="48" y="56" text-anchor="middle">--°</text>
+-                      </svg>
++                  <article class="access-rule-card">
++                    <i class="ti ti-cash-register"></i>
++                    <div>
++                      <strong>Pago separado</strong>
++                      <p>El segundo RFID solo procesa el pago y actualiza el saldo de la tarjeta. Luego el lector de acceso permite la salida.</p>
+                     </div>
+-                    <span class="gpio-tag">Servo · GPIO 25</span>
+-                    <button id="btn-servo-exit" class="manual-control servo-button" type="button"><i class="ti ti-lock-open"></i> Abrir</button>
+                   </article>
+                 </div>
+               </section>
+ 
+               <section class="sensor-group-card">
+-                <div class="sensor-group-title"><i class="ti ti-scan"></i> Doble módulo RFID — RC522 / NTAG215</div>
++                <div class="sensor-group-title"><i class="ti ti-scan"></i> RFID de acceso y RFID de pago — RC522 / NTAG215</div>
+                 <div class="rfid-tabs">
+                   <button type="button" class="rfid-tab active" data-rfid-page="rfid-read"><i class="ti ti-nfc"></i> Lectores</button>
+                   <button type="button" class="rfid-tab" data-rfid-page="rfid-write"><i class="ti ti-edit"></i> Escribir tarjeta</button>
+@@ -189,20 +166,20 @@
+                 <div id="rfid-read" class="rfid-page active">
+                   <div class="rfid-grid rfid-grid-three">
+                     <article class="rfid-card">
+-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de entrada</strong><span>Lectura + escritura · RC522</span></div></div>
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-login-2"></i></div><div><strong>RFID de acceso</strong><span>Entrada / salida · RC522</span></div></div>
+                       <div class="gpio-list"><span>SS: GPIO 5</span><span>RST: GPIO 4</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
+                       <div class="rfid-connection"><span id="rfid-entry-status-dot" class="sensor-pill off"></span><span id="rfid-entry-status-text">Sin conexión al ESP32</span></div>
+-                      <p>Este lector registra la entrada, permite escribir nuevas tarjetas y guarda el minuto simulado de ingreso.</p>
++                      <p>Este lector decide si el vehículo ingresa o sale. Si intenta ingresar dos veces o salir sin pago, se registra una incidencia.</p>
+                     </article>
+                     <article class="rfid-card">
+-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de salida</strong><span>Lectura + cobro · RC522</span></div></div>
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-logout-2"></i></div><div><strong>RFID de pago</strong><span>Cobro y actualización de saldo · RC522</span></div></div>
+                       <div class="gpio-list"><span>SS: GPIO 17</span><span>RST: GPIO 16</span><span>SCK: GPIO 18</span><span>MISO: GPIO 19</span><span>MOSI: GPIO 23</span></div>
+                       <div class="rfid-connection"><span id="rfid-exit-status-dot" class="sensor-pill off"></span><span id="rfid-exit-status-text">Sin conexión al ESP32</span></div>
+-                      <p>Este lector calcula el pago, descuenta el saldo y reescribe la tarjeta antes de abrir la salida.</p>
++                      <p>Este lector calcula el pago por los minutos reales transcurridos, descuenta saldo y deja la tarjeta habilitada para salir.</p>
+                     </article>
+                     <article class="rfid-card">
+                       <h3><i class="ti ti-id-badge-2"></i> Última lectura</h3>
+-                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de entrada o salida</small></div>
++                      <div id="rfid-result" class="rfid-empty"><i class="ti ti-nfc"></i><span>Esperando lectura…</span><small>Acerca una tarjeta al lector de acceso o pago</small></div>
+                     </article>
+                   </div>
+                 </div>
+@@ -210,7 +187,7 @@
+                 <div id="rfid-write" class="rfid-page">
+                   <div class="rfid-grid">
+                     <article class="rfid-card">
+-                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán únicamente desde el RFID de entrada</span></div></div>
++                      <div class="rfid-header"><div class="rfid-icon"><i class="ti ti-device-sd-card"></i></div><div><strong>Datos para la tarjeta</strong><span>Se escribirán desde el RFID de pago</span></div></div>
+                       <div class="write-grid">
+                         <label class="full"><span>Carro o modelo</span><input id="rfid-car" type="text" placeholder="Toyota Corolla"></label>
+                         <label><span>Marca</span><input id="rfid-brand" type="text" placeholder="Toyota"></label>
+@@ -221,14 +198,14 @@
+                         <label><span>DNI</span><input id="rfid-dni" type="text" maxlength="8" inputmode="numeric" placeholder="45678912"></label>
+                         <label><span>Tipo</span><select id="rfid-type"><option value="Sedan">Sedán</option><option value="SUV">SUV</option><option value="Deportivo">Deportivo</option><option value="Hatchback">Hatchback</option><option value="Pickup">Pickup</option><option value="Camioneta">Camioneta / Van</option><option value="Moto">Moto</option></select></label>
+                       </div>
+-                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir en tarjeta de entrada</button>
++                      <button id="btn-rfid-write" class="rfid-write-button" type="button"><i class="ti ti-device-sd-card"></i> Escribir tarjeta</button>
+                       <button id="btn-rfid-cancel" class="rfid-cancel-button" type="button" hidden>Cancelar escritura</button>
+                       <div id="rfid-write-status" class="write-status" hidden></div>
+                     </article>
+                     <article class="rfid-card instructions-card">
+                       <h3><i class="ti ti-info-circle"></i> Procedimiento</h3>
+-                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir en tarjeta de entrada”.</li><li>Acerca la NTAG215 al lector RFID de entrada.</li><li>En funcionamiento, la entrada guarda el ingreso y la salida descuenta el pago.</li></ol>
+-                      <p><strong>Importante:</strong> el lector de salida no escribe registros nuevos; solo actualiza el saldo después del cobro.</p>
++                      <ol><li>Completa los datos del vehículo y saldo inicial.</li><li>Presiona “Escribir tarjeta”.</li><li>Acerca la NTAG215 al lector RFID de pago.</li><li>En funcionamiento, el lector de acceso registra entrada/salida y el lector de pago descuenta el saldo.</li></ol>
++                      <p><strong>Importante:</strong> si el vehículo intenta salir por el lector de acceso sin haber pagado, se genera una incidencia para reportes.</p>
+                     </article>
+                   </div>
+                 </div>
+diff --git a/src/ws/iotGateway.js b/src/ws/iotGateway.js
+index 4802c49..a8b1774 100644
+--- a/src/ws/iotGateway.js
++++ b/src/ws/iotGateway.js
+@@ -2,7 +2,6 @@ const { WebSocketServer, WebSocket } = require("ws");
+ 
+ const PANEL_CLIENTS = new Set();
+ const ESP32_CLIENTS = new Set();
+-const CAMERA_CLIENTS = new Set();
+ 
+ function convertirATexto(payload) {
+   if (typeof payload === "string") return payload;
+@@ -17,19 +16,9 @@ function safeSend(socket, payload) {
+     return false;
+   }
+ 
+-  let message;
+-
+-  if (typeof payload === "string") {
+-    message = payload;
+-  } else if (
+-    Buffer.isBuffer(payload) ||
+-    payload instanceof ArrayBuffer ||
+-    Array.isArray(payload)
+-  ) {
+-    message = convertirATexto(payload);
+-  } else {
+-    message = JSON.stringify(payload);
+-  }
++  const message = typeof payload === "string"
++    ? payload
++    : JSON.stringify(payload);
+ 
+   socket.send(message);
+   return true;
+@@ -39,46 +28,22 @@ function broadcast(targets, payload) {
+   let total = 0;
+ 
+   for (const client of targets) {
+-    if (safeSend(client, payload)) {
+-      total += 1;
+-    }
++    if (safeSend(client, payload)) total += 1;
+   }
+ 
+   return total;
+ }
+ 
+-function parseJsonSeguro(payload) {
+-  try {
+-    return JSON.parse(payload);
+-  } catch {
+-    return null;
+-  }
+-}
+-
+ function getClientRole(requestUrl = "") {
+   try {
+     const url = new URL(requestUrl, "http://localhost");
+-
+-    const rawClient =
+-      url.searchParams.get("client") ||
+-      url.searchParams.get("role") ||
+-      "panel";
+-
++    const rawClient = url.searchParams.get("client") || url.searchParams.get("role") || "panel";
+     const client = rawClient.trim().toLowerCase();
+ 
+     if (client === "esp32" || client === "gateway" || client === "device") {
+       return "esp32";
+     }
+ 
+-    if (
+-      client === "camera" ||
+-      client === "cam" ||
+-      client === "esp32cam" ||
+-      client === "esp32-cam"
+-    ) {
+-      return "camera";
+-    }
+-
+     return "panel";
+   } catch {
+     return "panel";
+@@ -91,7 +56,6 @@ function getGatewayStatus() {
+     type: "status",
+     panels: PANEL_CLIENTS.size,
+     devices: ESP32_CLIENTS.size,
+-    cameras: CAMERA_CLIENTS.size,
+     timestamp: new Date().toISOString()
+   };
+ }
+@@ -100,20 +64,17 @@ function broadcastGatewayStatus() {
+   const status = getGatewayStatus();
+   broadcast(PANEL_CLIENTS, status);
+   broadcast(ESP32_CLIENTS, status);
+-  broadcast(CAMERA_CLIENTS, status);
+ }
+ 
+ function getRegistry(role) {
+-  if (role === "esp32") return ESP32_CLIENTS;
+-  if (role === "camera") return CAMERA_CLIENTS;
+-  return PANEL_CLIENTS;
++  return role === "esp32" ? ESP32_CLIENTS : PANEL_CLIENTS;
+ }
+ 
+ function attachIotGateway(server) {
+   const wss = new WebSocketServer({
+     server,
+     path: "/iot-ws",
+-    maxPayload: 12 * 1024 * 1024
++    maxPayload: 1024 * 1024
+   });
+ 
+   wss.on("connection", (socket, request) => {
+@@ -129,12 +90,9 @@ function attachIotGateway(server) {
+       gateway: true,
+       type: "connected",
+       role,
+-      message:
+-        role === "esp32"
+-          ? "ESP32 conectado al puente IoT."
+-          : role === "camera"
+-            ? "ESP32-CAM conectada al puente IoT."
+-            : "Panel web conectado al puente IoT.",
++      message: role === "esp32"
++        ? "ESP32 conectado al puente IoT."
++        : "Panel web conectado al puente IoT.",
+       ...getGatewayStatus()
+     });
+ 
+@@ -147,8 +105,6 @@ function attachIotGateway(server) {
+         PANEL_CLIENTS.size +
+         ". Dispositivos: " +
+         ESP32_CLIENTS.size +
+-        ". Camaras: " +
+-        CAMERA_CLIENTS.size +
+         "."
+     );
+ 
+@@ -160,25 +116,14 @@ function attachIotGateway(server) {
+       const payload = convertirATexto(message);
+ 
+       if (role === "panel") {
+-        const data = parseJsonSeguro(payload);
+-        const target = String(data?.target || data?.to || "").toLowerCase();
+-        const isCameraCommand =
+-          target === "camera" ||
+-          target === "esp32cam" ||
+-          data?.type === "camera_cmd" ||
+-          data?.type === "camera_subscribe";
+-
+-        const destino = isCameraCommand ? CAMERA_CLIENTS : ESP32_CLIENTS;
+-        const sent = broadcast(destino, payload);
++        const sent = broadcast(ESP32_CLIENTS, payload);
+ 
+         if (sent === 0) {
+           safeSend(socket, {
+             gateway: true,
+             type: "warning",
+-            target: isCameraCommand ? "camera" : "esp32",
+-            message: isCameraCommand
+-              ? "No hay ESP32-CAM conectada para recibir el comando."
+-              : "No hay ESP32 conectado para recibir el comando.",
++            target: "esp32",
++            message: "No hay ESP32 conectado para recibir el comando.",
+             timestamp: new Date().toISOString()
+           });
+         }
+@@ -186,11 +131,6 @@ function attachIotGateway(server) {
+         return;
+       }
+ 
+-      if (role === "camera") {
+-        broadcast(PANEL_CLIENTS, payload);
+-        return;
+-      }
+-
+       broadcast(PANEL_CLIENTS, payload);
+     });
+ 
+@@ -204,8 +144,6 @@ function attachIotGateway(server) {
+           PANEL_CLIENTS.size +
+           ". Dispositivos: " +
+           ESP32_CLIENTS.size +
+-          ". Camaras: " +
+-          CAMERA_CLIENTS.size +
+           "."
+       );
+ 

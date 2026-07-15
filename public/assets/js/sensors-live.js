@@ -1,7 +1,6 @@
 const STORAGE_WS_URL = "smartParkingEsp32WsUrl";
-const STORAGE_CAMERA_URL = "smartParkingEsp32CameraUrl";
+const STORAGE_SIM_DATE = "smartParkingOperationDate";
 const MAX_LOGS = 150;
-const SIM_SPEED_MAX = 1440;
 
 const state = {
   initialized: false,
@@ -10,27 +9,27 @@ const state = {
   reconnectTimer: null,
   reconnectEnabled: true,
   mode: "test",
-  servoEntrada: null,
-  servoSalida: null,
-  laser: null,
-  ldr: null,
-  pot: null,
+  servoAcceso: null,
   uid: null,
   lastReader: null,
   rfidReads: 0,
-  rfidEntrada: 0,
-  rfidSalida: 0,
+  rfidAcceso: 0,
+  rfidPago: 0,
   writeWaiting: false,
   logs: [],
   autoScroll: true,
-  simTime: new Date(),
-  simSpeed: 1,
-  lastSimTick: Date.now(),
+  operationDate: obtenerFechaHoyISO(),
   clockTimer: null
 };
 
 function el(id) {
   return document.getElementById(id);
+}
+
+function obtenerFechaHoyISO() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function obtenerGatewayWsUrl() {
@@ -58,6 +57,7 @@ function normalizarWsUrl(valor) {
 function aplicarTema(theme, accent) {
   const tema = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", tema);
+  document.body?.setAttribute("data-theme", tema);
   if (accent) document.documentElement.style.setProperty("--accent", accent);
 }
 
@@ -67,24 +67,24 @@ window.addEventListener("message", (evento) => {
   if (data.type === "smartparking:theme") aplicarTema(data.theme, data.accent);
 });
 
-function updateRfidConnectionIndicators(entrada = state.rfidEntrada, salida = state.rfidSalida) {
-  state.rfidEntrada = Number(entrada) === 1 ? 1 : 0;
-  state.rfidSalida = Number(salida) === 1 ? 1 : 0;
+function updateRfidConnectionIndicators(acceso = state.rfidAcceso, pago = state.rfidPago) {
+  state.rfidAcceso = Number(acceso) === 1 ? 1 : 0;
+  state.rfidPago = Number(pago) === 1 ? 1 : 0;
 
-  const entryDot = el("rfid-entry-status-dot") || el("rfid-status-dot");
-  const entryText = el("rfid-entry-status-text") || el("rfid-status-text");
-  const exitDot = el("rfid-exit-status-dot");
-  const exitText = el("rfid-exit-status-text");
+  const accessDot = el("rfid-entry-status-dot") || el("rfid-status-dot");
+  const accessText = el("rfid-entry-status-text") || el("rfid-status-text");
+  const paymentDot = el("rfid-exit-status-dot");
+  const paymentText = el("rfid-exit-status-text");
 
-  if (entryDot) entryDot.className = `sensor-pill ${state.rfidEntrada ? "ok" : "off"}`;
-  if (entryText) entryText.textContent = state.rfidEntrada
-    ? "Conectado · lectura/escritura activa"
-    : "Sin conexión al lector de entrada";
+  if (accessDot) accessDot.className = `sensor-pill ${state.rfidAcceso ? "ok" : "off"}`;
+  if (accessText) accessText.textContent = state.rfidAcceso
+    ? "Conectado · entrada/salida activa"
+    : "Sin conexión al RFID de acceso";
 
-  if (exitDot) exitDot.className = `sensor-pill ${state.rfidSalida ? "ok" : "off"}`;
-  if (exitText) exitText.textContent = state.rfidSalida
-    ? "Conectado · cobro activo"
-    : "Sin conexión al lector de salida";
+  if (paymentDot) paymentDot.className = `sensor-pill ${state.rfidPago ? "ok" : "off"}`;
+  if (paymentText) paymentText.textContent = state.rfidPago
+    ? "Conectado · pago activo"
+    : "Sin conexión al RFID de pago";
 }
 
 function setConnectionStatus(status, detail = "") {
@@ -203,7 +203,7 @@ function conectarESP32(manual = true) {
   localStorage.setItem(STORAGE_WS_URL, url);
 
   if (window.location.protocol === "https:" && url.startsWith("ws://")) {
-    const detail = "El navegador bloquea ws:// desde una página HTTPS. Usa la prueba local o un WebSocket wss://.";
+    const detail = "El navegador bloquea ws:// desde una página HTTPS. Usa wss://.";
     setConnectionStatus("offline", detail);
     addLog("error", "WS", detail);
     state.reconnectEnabled = false;
@@ -230,6 +230,7 @@ function conectarESP32(manual = true) {
     setConnectionStatus("connected", url);
     addLog("ok", "WS", "Conexión establecida. Esperando datos reales del ESP32.");
     wsSend({ cmd: "mode", mode: state.mode }, false);
+    enviarFechaOperacion(false);
   };
 
   socket.onmessage = (event) => {
@@ -268,7 +269,6 @@ function wsSend(payload, logWhenDisconnected = true) {
 
 function updateServo(id, angle) {
   const numericAngle = Number(angle);
-  const isEntry = id === "entry";
   const open = numericAngle === 90;
   const arc = el(`servo-${id}-arc`);
   const angleLabel = el(`servo-${id}-angle`);
@@ -294,88 +294,8 @@ function updateServo(id, angle) {
       ? '<i class="ti ti-lock"></i> Cerrar'
       : '<i class="ti ti-lock-open"></i> Abrir';
     button.dataset.open = open ? "true" : "false";
-    button.dataset.closedAngle = isEntry ? "0" : "180";
+    button.dataset.closedAngle = "0";
   }
-}
-
-function updateLaser(value) {
-  const on = Number(value) === 1;
-  const label = el("laser-value");
-  const detail = el("laser-detail");
-  const dot = el("laser-dot");
-  const button = el("btn-laser");
-
-  if (label) {
-    label.textContent = on ? "ENCENDIDO" : "APAGADO";
-    label.style.color = on ? "var(--red)" : "var(--muted)";
-  }
-  if (detail) detail.textContent = on ? "Haz activo" : "Sin emisión";
-  if (dot) dot.className = `sensor-pill ${on ? "on" : "off"}`;
-  if (button) {
-    button.classList.toggle("on", on);
-    button.dataset.on = on ? "true" : "false";
-    button.innerHTML = on
-      ? '<i class="ti ti-power"></i> Apagar láser'
-      : '<i class="ti ti-power"></i> Encender láser';
-  }
-}
-
-function updateLdr(value) {
-  const free = Number(value) === 1;
-  const label = el("ldr-value");
-  const detail = el("ldr-detail");
-  const dot = el("ldr-dot");
-
-  if (label) {
-    label.textContent = free ? "LIBRE" : "BLOQUEADO";
-    label.style.color = free ? "var(--green)" : "var(--red)";
-  }
-  if (detail) detail.textContent = free ? "Paso libre detectado" : "Obstáculo u oscuridad";
-  if (dot) dot.className = `sensor-pill ${free ? "ok" : "on"}`;
-}
-
-function formatSpeed(speed) {
-  const value = Number(speed) || 1;
-  if (value < 2) return "x1";
-  if (value < 10) return `x${value.toFixed(1)}`;
-  return `x${Math.round(value)}`;
-}
-
-function describeSpeed(speed) {
-  const value = Number(speed) || 1;
-  if (value < 1.5) return "Tiempo real";
-  if (value >= SIM_SPEED_MAX - 2) return "1 min real = 1 día simulado";
-
-  const simulatedMinutes = value;
-  if (simulatedMinutes >= 60) {
-    return `1 min real = ${(simulatedMinutes / 60).toFixed(1)} h simuladas`;
-  }
-
-  return `1 min real = ${Math.round(simulatedMinutes)} min simulados`;
-}
-
-function updatePot(rawValue, speedFromDevice) {
-  const raw = Math.max(0, Math.min(4095, Number(rawValue) || 0));
-  const percentage = raw / 4095;
-  const speed = Number(speedFromDevice) > 0
-    ? Number(speedFromDevice)
-    : 1 + percentage * (SIM_SPEED_MAX - 1);
-  const offset = 132 - percentage * 132;
-  const speedText = formatSpeed(speed);
-
-  const arc = el("pwm-arc");
-  if (arc) {
-    arc.style.strokeDashoffset = offset.toFixed(1);
-    arc.style.stroke = "var(--accent)";
-  }
-
-  if (el("pwm-val")) el("pwm-val").textContent = speedText;
-  if (el("pwm-sub")) el("pwm-sub").innerHTML = `ADC: ${raw} / 4095<br>${describeSpeed(speed)}`;
-  if (el("sim-speed-badge")) el("sim-speed-badge").textContent = speedText;
-  if (el("sim-speed-desc")) el("sim-speed-desc").textContent = describeSpeed(speed);
-  if (el("sim-speed-bar")) el("sim-speed-bar").style.width = `${(percentage * 100).toFixed(1)}%`;
-
-  state.simSpeed = speed;
 }
 
 function addDataRow(container, key, value, className = "") {
@@ -393,15 +313,23 @@ function addDataRow(container, key, value, className = "") {
   container.appendChild(row);
 }
 
+function nombreLector(reader = "") {
+  const value = String(reader).toLowerCase();
+  if (["acceso", "entrada", "salida", "entrada_salida"].includes(value)) return "Acceso / entrada-salida";
+  if (["pago", "payment", "cobro"].includes(value)) return "Pago";
+  return "No indicado";
+}
+
 function renderRfid(uid, cardData, reader = "") {
   const container = el("rfid-result");
   if (!container) return;
 
   container.className = "";
   container.replaceChildren();
-  addDataRow(container, "Lector", reader === "salida" ? "Salida / pago" : reader === "entrada" ? "Entrada / registro" : "No indicado");
+  addDataRow(container, "Lector", nombreLector(reader));
   addDataRow(container, "UID", uid, "uid");
   addDataRow(container, "Hora", new Date().toLocaleTimeString("es-PE", { hour12: false }));
+  addDataRow(container, "Fecha operación", state.operationDate);
 
   if (cardData?.hasData) {
     addDataRow(container, "Carro", cardData.carro || "—");
@@ -412,7 +340,7 @@ function renderRfid(uid, cardData, reader = "") {
     addDataRow(container, "DNI", cardData.dni || "—");
     addDataRow(container, "Teléfono", cardData.telefono || "—");
     addDataRow(container, "Saldo", `S/ ${cardData.saldo || "0.00"}`);
-    addDataRow(container, "Ingreso sim.", cardData.ingresoMin ? `min ${cardData.ingresoMin}` : "Sin ingreso activo");
+    addDataRow(container, "Estado", cardData.estadoSesion || cardData.estado || "Sin estado");
   } else {
     addDataRow(container, "Datos", "Tarjeta sin información grabada");
   }
@@ -437,8 +365,8 @@ function handleWriteStatus(data) {
     state.writeWaiting = true;
     button.disabled = true;
     cancel.hidden = false;
-    setWriteStatus("Esperando tarjeta… acércala al RFID de entrada, no al de salida.", "info");
-    addLog("info", "RFID", "Modo escritura activado en lector de entrada.");
+    setWriteStatus("Esperando tarjeta… acércala al RFID de pago.", "info");
+    addLog("info", "RFID", "Modo escritura activado en lector de pago.");
   } else if (data.writeStatus === "success") {
     state.writeWaiting = false;
     button.disabled = false;
@@ -449,11 +377,11 @@ function handleWriteStatus(data) {
     state.writeWaiting = false;
     button.disabled = false;
     cancel.hidden = true;
-    setWriteStatus("No se pudo escribir la tarjeta. Verifica que sea compatible y vuelve a intentar.", "error");
-    addLog("error", "RFID", "Fallo durante la escritura de la tarjeta.");
+    setWriteStatus(data.message || "No se pudo escribir la tarjeta. Verifica que sea compatible y vuelve a intentar.", "error");
+    addLog("error", "RFID", data.message || "Fallo durante la escritura de la tarjeta.");
   } else if (data.writeStatus === "wrong_reader") {
-    setWriteStatus("La tarjeta se acercó al lector de salida. Para registrar datos, usa el RFID de entrada.", "error");
-    addLog("warn", "RFID", "Escritura rechazada porque se usó el lector de salida.");
+    setWriteStatus("Usa el RFID de pago para escribir o actualizar tarjetas.", "error");
+    addLog("warn", "RFID", "Escritura rechazada por lector incorrecto.");
   } else if (data.writeStatus === "cancelled") {
     state.writeWaiting = false;
     button.disabled = false;
@@ -463,15 +391,24 @@ function handleWriteStatus(data) {
   }
 }
 
-function handleEntryStatus(data) {
-  if (data.entryStatus === "success") {
-    addLog("ok", "ENTRADA", data.message || "Ingreso registrado y barrera abierta.");
-  } else if (data.entryStatus === "error") {
-    addLog("error", "ENTRADA", data.message || "No se pudo procesar la entrada.");
-  }
+function handleAccessStatus(data) {
+  const status = data.accessStatus ?? data.entryStatus ?? data.exitStatus;
+  if (!status) return;
+
+  const tag = data.exitStatus !== undefined ? "SALIDA" : data.entryStatus !== undefined ? "ENTRADA" : "ACCESO";
+  const ok = status === "success" || status === "ok" || status === true;
+  addLog(ok ? "ok" : "error", tag, data.message || (ok ? "Acceso autorizado." : "Acceso rechazado."));
+}
+
+function handleIncidentStatus(data) {
+  const status = data.incidentStatus ?? data.incidenciaStatus;
+  if (!status) return;
+  addLog("error", "INCIDENCIA", data.message || "Incidencia registrada para reportes.");
 }
 
 function handlePaymentStatus(data) {
+  if (data.paymentStatus === undefined) return;
+
   const base = data.message || (data.paymentStatus === "success" ? "Pago aplicado." : "Pago rechazado.");
   const extra = data.paymentStatus === "success"
     ? ` Pago: S/ ${Number(data.pago || 0).toFixed(2)} · Nuevo saldo: S/ ${Number(data.saldoNuevo || 0).toFixed(2)}`
@@ -479,7 +416,7 @@ function handlePaymentStatus(data) {
       ? ` Pago requerido: S/ ${Number(data.pago || 0).toFixed(2)}`
       : "";
 
-  addLog(data.paymentStatus === "success" ? "ok" : "error", "SALIDA", `${base}${extra}`);
+  addLog(data.paymentStatus === "success" ? "ok" : "error", "PAGO", `${base}${extra}`);
 }
 
 function syncModeFromDevice(mode) {
@@ -492,54 +429,42 @@ function handleState(data) {
   if (data.gateway === true) return;
 
   if (data.writeStatus !== undefined) handleWriteStatus(data);
-  if (data.entryStatus !== undefined) handleEntryStatus(data);
-  if (data.paymentStatus !== undefined) handlePaymentStatus(data);
+  handleAccessStatus(data);
+  handleIncidentStatus(data);
+  handlePaymentStatus(data);
   if (data.cmdStatus === "blocked") addLog("warn", "MODO", data.message || "Comando bloqueado.");
   if (data.mode !== undefined) syncModeFromDevice(data.mode);
+  if (data.fechaOperacion || data.operationDate) aplicarFechaOperacion(data.fechaOperacion || data.operationDate, false);
 
-  if (data.rfidEntrada !== undefined || data.rfidSalida !== undefined) {
-    updateRfidConnectionIndicators(data.rfidEntrada ?? state.rfidEntrada, data.rfidSalida ?? state.rfidSalida);
+  if (
+    data.rfidAcceso !== undefined ||
+    data.rfidPago !== undefined ||
+    data.rfidEntrada !== undefined ||
+    data.rfidSalida !== undefined
+  ) {
+    updateRfidConnectionIndicators(
+      data.rfidAcceso ?? data.rfidEntrada ?? state.rfidAcceso,
+      data.rfidPago ?? data.rfidSalida ?? state.rfidPago
+    );
   }
 
-  if (data.servoEntrada !== undefined && Number(data.servoEntrada) !== state.servoEntrada) {
-    state.servoEntrada = Number(data.servoEntrada);
-    updateServo("entry", state.servoEntrada);
-    addLog("ok", "SERVO", `Entrada: ${state.servoEntrada}°`);
-  }
-
-  if (data.servoSalida !== undefined && Number(data.servoSalida) !== state.servoSalida) {
-    state.servoSalida = Number(data.servoSalida);
-    updateServo("exit", state.servoSalida);
-    addLog("ok", "SERVO", `Salida: ${state.servoSalida}°`);
-  }
-
-  if (data.laser !== undefined && Number(data.laser) !== state.laser) {
-    state.laser = Number(data.laser);
-    updateLaser(state.laser);
-    addLog(state.laser ? "ok" : "warn", "LÁSER", state.laser ? "Encendido" : "Apagado");
-  }
-
-  if (data.ldr !== undefined && Number(data.ldr) !== state.ldr) {
-    state.ldr = Number(data.ldr);
-    updateLdr(state.ldr);
-    addLog(state.ldr ? "info" : "warn", "LDR", state.ldr ? "Paso libre" : "Obstáculo detectado");
-  }
-
-  if (data.pot !== undefined) {
-    state.pot = Number(data.pot);
-    updatePot(state.pot, data.simSpeed);
+  const servoValue = data.servoAcceso ?? data.servoEntrada;
+  if (servoValue !== undefined && Number(servoValue) !== state.servoAcceso) {
+    state.servoAcceso = Number(servoValue);
+    updateServo("entry", state.servoAcceso);
+    addLog("ok", "SERVO", `Acceso: ${state.servoAcceso}°`);
   }
 
   if (data.uid !== undefined && data.uid && data.uid !== "----") {
     const incomingUid = String(data.uid);
-    const incomingReader = String(data.lastReader || "");
+    const incomingReader = String(data.lastReader || data.reader || "");
     const uniqueRead = incomingUid !== state.uid || incomingReader !== state.lastReader;
     if (uniqueRead) {
       state.uid = incomingUid;
       state.lastReader = incomingReader;
       state.rfidReads += 1;
       renderRfid(state.uid, data.cardData, incomingReader);
-      addLog("ok", "RFID", `Tarjeta detectada en ${incomingReader || "lector"} · ${state.uid}`);
+      addLog("ok", "RFID", `Tarjeta detectada en ${nombreLector(incomingReader)} · ${state.uid}`);
     }
   }
 }
@@ -558,14 +483,14 @@ function setMode(mode, notifyDevice = true) {
   liveButton?.classList.toggle("active-live", live);
 
   if (subtitle) subtitle.textContent = live
-    ? "Funcionamiento — RFID de entrada registra ingreso y RFID de salida descuenta saldo"
-    : "Modo prueba — controles manuales habilitados";
+    ? "Funcionamiento — acceso valida entrada/salida y pago queda separado"
+    : "Modo prueba — control manual de la barrera habilitado";
 
   if (banner) {
     banner.className = `mode-banner ${live ? "live" : "test"}`;
     banner.innerHTML = live
-      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: la entrada escribe el ingreso; la salida cobra, actualiza saldo y abre la barrera si el saldo alcanza.</span>'
-      : '<i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes accionar servos y láser manualmente.</span>';
+      ? '<i class="ti ti-player-play"></i><span>Modo funcionamiento activo: RFID de acceso permite entrar o salir; RFID de pago descuenta saldo. Los intentos de salida sin pago quedan como incidencia.</span>'
+      : '<i class="ti ti-info-circle"></i><span>Modo prueba activo: puedes abrir o cerrar manualmente la barrera única de acceso.</span>';
   }
 
   if (notifyDevice) {
@@ -574,32 +499,18 @@ function setMode(mode, notifyDevice = true) {
   }
 }
 
-function toggleServo(id) {
+function toggleServo() {
   if (state.mode !== "test") {
     addLog("warn", "MODO", "Control manual bloqueado en modo funcionamiento.");
     return;
   }
 
-  const isEntry = id === "entry";
-  const current = isEntry ? state.servoEntrada : state.servoSalida;
+  const current = state.servoAcceso;
   const open = current === 90;
-  const angle = open ? (isEntry ? 0 : 180) : 90;
-  const firmwareId = isEntry ? "entrada" : "salida";
+  const angle = open ? 0 : 90;
 
-  if (wsSend({ cmd: "servo", id: firmwareId, angle })) {
-    addLog("info", "CMD", `Servo ${firmwareId} → ${angle}°`);
-  }
-}
-
-function toggleLaser() {
-  if (state.mode !== "test") {
-    addLog("warn", "MODO", "Control manual bloqueado en modo funcionamiento.");
-    return;
-  }
-
-  const value = state.laser === 1 ? 0 : 1;
-  if (wsSend({ cmd: "laser", value })) {
-    addLog("info", "CMD", `Láser → ${value ? "ON" : "OFF"}`);
+  if (wsSend({ cmd: "servo", id: "acceso", angle })) {
+    addLog("info", "CMD", `Servo acceso → ${angle}°`);
   }
 }
 
@@ -612,6 +523,7 @@ function sendWriteCard() {
 
   const payload = {
     cmd: "writeCard",
+    reader: "pago",
     carro: el("rfid-car")?.value.trim() || "",
     marca: el("rfid-brand")?.value.trim() || "",
     placa: (el("rfid-plate")?.value.trim() || "").toUpperCase(),
@@ -622,88 +534,52 @@ function sendWriteCard() {
     tipoCarro: el("rfid-type")?.value || "Sedan"
   };
 
-  const hasData = Object.entries(payload).some(([key, value]) => key !== "cmd" && String(value).trim());
+  const hasData = Object.entries(payload).some(([key, value]) => !["cmd", "reader"].includes(key) && String(value).trim());
   if (!hasData) {
     setWriteStatus("Completa al menos un campo antes de escribir.", "error");
     return;
   }
 
   if (wsSend(payload)) {
-    setWriteStatus("Solicitud enviada. Acerca la tarjeta al RFID de entrada…", "info");
-    addLog("info", "RFID", `Datos enviados para escritura en entrada${payload.placa ? ` · ${payload.placa}` : ""}.`);
+    setWriteStatus("Solicitud enviada. Acerca la tarjeta al RFID de pago…", "info");
+    addLog("info", "RFID", `Datos enviados para escritura en pago${payload.placa ? ` · ${payload.placa}` : ""}.`);
   }
 }
 
-function applyCameraUrl(urlValue, announce = true) {
-  const input = el("esp32-camera-url");
-  const image = el("camera-stream");
-  const panel = el("camera-panel");
-  const empty = el("camera-empty");
-  const status = el("camera-status");
-  const subtitle = el("camera-subtitle");
-  const device = el("camera-device");
+function aplicarFechaOperacion(fecha, notifyDevice = true) {
+  const valor = /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ""))
+    ? String(fecha)
+    : obtenerFechaHoyISO();
 
-  const url = String(urlValue ?? input?.value ?? "").trim();
-  if (input) input.value = url;
-  localStorage.setItem(STORAGE_CAMERA_URL, url);
+  state.operationDate = valor;
+  localStorage.setItem(STORAGE_SIM_DATE, valor);
 
-  if (!image || !panel || !empty || !status) {
-    if (announce) addLog("info", "CÁMARA", url ? "URL de cámara guardada para Monitoreo en Tiempo Real." : "URL de cámara eliminada.");
-    return;
-  }
+  const input = el("sim-date-input");
+  if (input && input.value !== valor) input.value = valor;
 
-  image.onload = null;
-  image.onerror = null;
+  tickSimulationClock();
+  if (notifyDevice) enviarFechaOperacion(true);
+}
 
-  if (!url) {
-    image.hidden = true;
-    image.removeAttribute("src");
-    panel.classList.remove("has-stream", "stream-error");
-    status.textContent = "No configurada";
-    status.className = "status-badge neutral";
-    if (subtitle) subtitle.textContent = "Configura la URL desde Sensores en vivo";
-    if (device) device.textContent = "ESP32-CAM";
-    if (announce) addLog("info", "CÁMARA", "URL de transmisión eliminada.");
-    return;
-  }
-
-  status.textContent = "Conectando";
-  status.className = "status-badge warn";
-  if (subtitle) subtitle.textContent = "Intentando abrir transmisión real…";
-  if (device) device.textContent = url;
-
-  image.onload = () => {
-    image.hidden = false;
-    panel.classList.add("has-stream");
-    panel.classList.remove("stream-error");
-    status.textContent = "Online";
-    status.className = "status-badge online";
-    if (subtitle) subtitle.textContent = "Transmisión en vivo configurada";
-    if (el("camera-reading")) el("camera-reading").textContent = `Última lectura: ${new Date().toLocaleTimeString("es-PE")}`;
-    if (announce) addLog("ok", "CÁMARA", "Transmisión cargada correctamente.");
-  };
-
-  image.onerror = () => {
-    image.hidden = true;
-    panel.classList.remove("has-stream");
-    panel.classList.add("stream-error");
-    status.textContent = "Sin señal";
-    status.className = "status-badge offline";
-    if (subtitle) subtitle.textContent = "No se pudo abrir la URL configurada";
-    if (announce) addLog("error", "CÁMARA", "No se pudo cargar la transmisión.");
-  };
-
-  image.src = `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
+function enviarFechaOperacion(log = true) {
+  const enviado = wsSend({ cmd: "simulationDate", date: state.operationDate }, false);
+  if (enviado && log) addLog("info", "FECHA", `Fecha de operación: ${state.operationDate}`);
 }
 
 function tickSimulationClock() {
-  const now = Date.now();
-  const elapsed = now - state.lastSimTick;
-  state.lastSimTick = now;
-  state.simTime = new Date(state.simTime.getTime() + elapsed * state.simSpeed);
+  const ahora = new Date();
+  const [year, month, day] = state.operationDate.split("-").map(Number);
+  const fechaOperacion = new Date(
+    year,
+    month - 1,
+    day,
+    ahora.getHours(),
+    ahora.getMinutes(),
+    ahora.getSeconds()
+  );
 
-  const time = state.simTime.toLocaleTimeString("es-PE", { hour12: false });
-  const date = state.simTime.toLocaleDateString("es-PE", {
+  const time = fechaOperacion.toLocaleTimeString("es-PE", { hour12: false });
+  const date = fechaOperacion.toLocaleDateString("es-PE", {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -716,12 +592,9 @@ function tickSimulationClock() {
 
 function bindEvents() {
   el("btn-esp32-reconnect")?.addEventListener("click", () => conectarESP32(true));
-  el("btn-camera-apply")?.addEventListener("click", () => applyCameraUrl(undefined, true));
   el("mode-btn-test")?.addEventListener("click", () => setMode("test"));
   el("mode-btn-live")?.addEventListener("click", () => setMode("live"));
-  el("btn-servo-entry")?.addEventListener("click", () => toggleServo("entry"));
-  el("btn-servo-exit")?.addEventListener("click", () => toggleServo("exit"));
-  el("btn-laser")?.addEventListener("click", toggleLaser);
+  el("btn-servo-entry")?.addEventListener("click", toggleServo);
   el("btn-rfid-write")?.addEventListener("click", sendWriteCard);
   el("btn-rfid-cancel")?.addEventListener("click", () => wsSend({ cmd: "cancelWrite" }));
   el("btn-log-clear")?.addEventListener("click", () => {
@@ -742,6 +615,10 @@ function bindEvents() {
     localStorage.setItem(STORAGE_WS_URL, event.target.value);
   });
 
+  el("sim-date-input")?.addEventListener("change", (event) => {
+    aplicarFechaOperacion(event.target.value, true);
+  });
+
   document.querySelectorAll(".rfid-tab").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll(".rfid-tab").forEach((item) => item.classList.remove("active"));
@@ -757,7 +634,7 @@ export function inicializarSensoresEnVivo() {
   state.initialized = true;
 
   const storedWs = localStorage.getItem(STORAGE_WS_URL);
-  const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL);
+  const storedDate = localStorage.getItem(STORAGE_SIM_DATE) || obtenerFechaHoyISO();
 
   const wsInicial = window.location.protocol === "https:" && /^ws:\/\//i.test(storedWs || "")
     ? ""
@@ -768,15 +645,13 @@ export function inicializarSensoresEnVivo() {
   if (el("esp32-ws-url")) el("esp32-ws-url").value = defaultWs;
   localStorage.setItem(STORAGE_WS_URL, defaultWs);
 
-  if (storedCamera && el("esp32-camera-url")) el("esp32-camera-url").value = storedCamera;
-
   bindEvents();
   setMode("test", false);
   setAutoScroll(true);
   updateRfidConnectionIndicators(0, 0);
-  applyCameraUrl(storedCamera || "", false);
+  aplicarFechaOperacion(storedDate, false);
 
-  state.clockTimer = setInterval(tickSimulationClock, 100);
+  state.clockTimer = setInterval(tickSimulationClock, 1000);
 }
 
 export function activarSensoresEnVivo() {
@@ -793,9 +668,4 @@ export function detenerSensoresEnVivo() {
   state.reconnectEnabled = false;
   closeSocket();
   setConnectionStatus("offline", "Conexión detenida.");
-}
-
-export function aplicarCamaraGuardada() {
-  const storedCamera = localStorage.getItem(STORAGE_CAMERA_URL) || "";
-  applyCameraUrl(storedCamera, false);
 }

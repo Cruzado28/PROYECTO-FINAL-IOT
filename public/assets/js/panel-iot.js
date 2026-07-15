@@ -15,6 +15,13 @@ const embedPage = parametros.get("embed");
 const isEmbed = embedPage === "dashboard" || embedPage === "sensors";
 let resizeObserver = null;
 
+if (isEmbed) {
+  document.body.classList.add("embed-mode", `embed-${embedPage}`);
+  loginScreen.hidden = true;
+  loginScreen.style.display = "none";
+}
+
+
 function toast(mensaje, tipo = "success") {
   const contenedor = document.getElementById("toast-container");
   const elemento = document.createElement("div");
@@ -70,12 +77,16 @@ function mostrarLogin() {
     return;
   }
 
+  document.documentElement.classList.remove("session-boot", "embed-boot");
+
   appShell.hidden = true;
   loginScreen.hidden = false;
   loginScreen.style.display = "flex";
 }
 
 function mostrarAplicacion(administrador) {
+  document.documentElement.classList.remove("session-boot", "embed-boot");
+
   loginScreen.style.display = "none";
   appShell.hidden = false;
   const nombre = administrador?.nombre || obtenerAdministrador()?.nombre || "Administrador";

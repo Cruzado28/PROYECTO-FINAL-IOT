@@ -643,6 +643,8 @@ window.fetch = async function (recurso, opciones = {}) {
     const mensajeError =
       document.getElementById("login-err");
 
+    document.documentElement.classList.remove("session-boot");
+
     if (sistema) {
       sistema.style.display = "none";
     }
@@ -742,6 +744,8 @@ window.addEventListener("message", (evento) => {
 });
 
 async function mostrarSistemaAutenticado(administrador) {
+  document.documentElement.classList.remove("session-boot");
+
   document.getElementById(
     "login-screen"
   ).style.display = "none";
@@ -816,6 +820,8 @@ async function verificarSesionGuardada() {
     sessionStorage.removeItem(
       "smartParkingAdmin"
     );
+
+    document.documentElement.classList.remove("session-boot");
 
     document.getElementById(
       "login-screen"

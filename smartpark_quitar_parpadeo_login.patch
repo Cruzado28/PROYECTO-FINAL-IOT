@@ -1,0 +1,115 @@
+--- a/public/admin.html
++++ b/public/admin.html
+@@ -7,6 +7,20 @@
+ <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+ <link rel="stylesheet" href="/assets/css/admin.css">
++<script>
++(function(){
++  try {
++    if (sessionStorage.getItem("smartParkingToken")) {
++      document.documentElement.classList.add("session-boot");
++    }
++  } catch (error) {}
++})();
++</script>
++<style>
++/* Evita que el formulario de login parpadee al recargar o cambiar vistas con sesión activa. */
++html.session-boot #login-screen{display:none!important}
++html.session-boot body{background:#0f1117}
++</style>
+ </head>
+ <body>
+ <div id="app">
+--- a/public/panel-iot.html
++++ b/public/panel-iot.html
+@@ -7,6 +7,27 @@
+   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+   <link rel="stylesheet" href="/assets/css/panel-iot.css">
+   <link rel="stylesheet" href="/assets/css/sensors-live.css">
++<script>
++(function(){
++  try {
++    const parametros = new URLSearchParams(window.location.search);
++    const embed = parametros.get("embed");
++    if (embed === "dashboard" || embed === "sensors") {
++      document.documentElement.classList.add("embed-boot");
++    }
++    if (sessionStorage.getItem("smartParkingToken")) {
++      document.documentElement.classList.add("session-boot");
++    }
++  } catch (error) {}
++})();
++</script>
++<style>
++/* En modo embebido nunca debe aparecer el login interno del iframe. */
++html.embed-boot #login-screen,
++html.session-boot #login-screen{display:none!important}
++html.embed-boot body,
++html.session-boot body{background:#0f1117}
++</style>
+ </head>
+ <body>
+   <div id="login-screen" class="login-screen">
+--- a/public/assets/js/admin.js
++++ b/public/assets/js/admin.js
+@@ -643,6 +643,8 @@
+     const mensajeError =
+       document.getElementById("login-err");
+ 
++    document.documentElement.classList.remove("session-boot");
++
+     if (sistema) {
+       sistema.style.display = "none";
+     }
+@@ -742,6 +744,8 @@
+ });
+ 
+ async function mostrarSistemaAutenticado(administrador) {
++  document.documentElement.classList.remove("session-boot");
++
+   document.getElementById(
+     "login-screen"
+   ).style.display = "none";
+@@ -817,6 +821,8 @@
+       "smartParkingAdmin"
+     );
+ 
++    document.documentElement.classList.remove("session-boot");
++
+     document.getElementById(
+       "login-screen"
+     ).style.display = "flex";
+--- a/public/assets/js/panel-iot.js
++++ b/public/assets/js/panel-iot.js
+@@ -15,6 +15,13 @@
+ const isEmbed = embedPage === "dashboard" || embedPage === "sensors";
+ let resizeObserver = null;
+ 
++if (isEmbed) {
++  document.body.classList.add("embed-mode", `embed-${embedPage}`);
++  loginScreen.hidden = true;
++  loginScreen.style.display = "none";
++}
++
++
+ function toast(mensaje, tipo = "success") {
+   const contenedor = document.getElementById("toast-container");
+   const elemento = document.createElement("div");
+@@ -70,12 +77,16 @@
+     return;
+   }
+ 
++  document.documentElement.classList.remove("session-boot", "embed-boot");
++
+   appShell.hidden = true;
+   loginScreen.hidden = false;
+   loginScreen.style.display = "flex";
+ }
+ 
+ function mostrarAplicacion(administrador) {
++  document.documentElement.classList.remove("session-boot", "embed-boot");
++
+   loginScreen.style.display = "none";
+   appShell.hidden = false;
+   const nombre = administrador?.nombre || obtenerAdministrador()?.nombre || "Administrador";

@@ -7,6 +7,27 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
   <link rel="stylesheet" href="/assets/css/panel-iot.css">
   <link rel="stylesheet" href="/assets/css/sensors-live.css">
+<script>
+(function(){
+  try {
+    const parametros = new URLSearchParams(window.location.search);
+    const embed = parametros.get("embed");
+    if (embed === "dashboard" || embed === "sensors") {
+      document.documentElement.classList.add("embed-boot");
+    }
+    if (sessionStorage.getItem("smartParkingToken")) {
+      document.documentElement.classList.add("session-boot");
+    }
+  } catch (error) {}
+})();
+</script>
+<style>
+/* En modo embebido nunca debe aparecer el login interno del iframe. */
+html.embed-boot #login-screen,
+html.session-boot #login-screen{display:none!important}
+html.embed-boot body,
+html.session-boot body{background:#0f1117}
+</style>
 </head>
 <body>
   <div id="login-screen" class="login-screen">

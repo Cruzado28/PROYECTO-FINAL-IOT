@@ -311,7 +311,7 @@ function registrarPagoUnico(data = {}) {
   if (!ok || pago <= 0) return;
   const fecha = String(data.fechaOperacion || dashboardState.fechaOperacion || "");
   const key = [fecha, data.uid || "", data.espacio || "", pago.toFixed(2), data.duracionMin || "", data.fechaHoraOperacion || ""].join("|");
-  const pagos = leerPagosGuardados(fecha);
+  const pagos = leerPagosGuardados(dashboardState.fechaOperacion);
   if (pagos.events.some((e) => e.key === key)) return;
   pagos.total = Number(pagos.total || 0) + pago;
   pagos.events.push({ key, pago, fecha, hora: new Date().toISOString() });
@@ -324,7 +324,7 @@ function registrarPagoUnico(data = {}) {
 function guardarEstadoLive() {
   try {
     const resumen = resumenDesdeEspacios();
-    const pagos = leerPagosGuardados(fecha);
+    const pagos = leerPagosGuardados(dashboardState.fechaOperacion);
     const payload = {
       spaces: dashboardState.spaces,
       resumen: {
@@ -363,7 +363,7 @@ function setText(id, value) {
 
 function renderDashboardLive() {
   const resumen = resumenDesdeEspacios();
-  const pagos = leerPagosGuardados(fecha);
+  const pagos = leerPagosGuardados(dashboardState.fechaOperacion);
   const ingresos = Number(pagos.total || dashboardState.ingresosDia || resumen.ingresosActuales || 0);
 
   setText("stat-total", resumen.total);

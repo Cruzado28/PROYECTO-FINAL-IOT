@@ -1,0 +1,70 @@
+*{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0f1117;--surface:#181c27;--card:#1e2337;--border:#2a3050;--accent:#4f8ef7;--accent-dim:rgba(79,142,247,.12);--green:#22c97a;--green-dim:rgba(34,201,122,.12);--red:#f25757;--red-dim:rgba(242,87,87,.12);--warn:#f5a623;--warn-dim:rgba(245,166,35,.12);--purple:#a855f7;--purple-dim:rgba(168,85,247,.12);--text:#e8eaf2;--sub:#8890aa;--muted:#555e7a;--radius:12px;--radius-lg:16px}body{font-family:Segoe UI,system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}button,input{font:inherit}.login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow:hidden}.login-screen:before{content:"";position:absolute;width:680px;height:680px;background:radial-gradient(circle,rgba(79,142,247,.09),transparent 68%);top:-180px}.login-box{width:min(420px,100%);padding:38px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);position:relative;box-shadow:0 25px 70px rgba(0,0,0,.28)}.brand-row,.topbar-left,.topbar-right,.user-pill{display:flex;align-items:center}.brand-row{gap:10px;margin-bottom:28px}.brand-icon{width:42px;height:42px;border-radius:11px;background:var(--accent);display:grid;place-items:center;color:white;font-size:21px}.brand-icon.small{width:32px;height:32px;border-radius:8px;font-size:17px}.brand{font-size:21px;font-weight:750}.brand.small{font-size:16px}.brand span{color:var(--accent)}.login-box h1{font-size:24px;margin-bottom:7px}.login-box>p{font-size:13px;color:var(--sub);margin-bottom:26px}.login-box label{display:block;margin:15px 0 7px;font-size:11px;font-weight:700;letter-spacing:.55px;color:var(--sub);text-transform:uppercase}.input-wrap{position:relative}.input-wrap i{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted)}.input-wrap input{width:100%;padding:11px 12px 11px 40px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);outline:none}.input-wrap input:focus{border-color:var(--accent)}.btn-primary,.btn-secondary,.icon-button,.nav-tab{border:0;cursor:pointer}.btn-primary{width:100%;margin-top:20px;padding:12px;border-radius:10px;background:var(--accent);color:white;font-weight:700}.login-box small{display:block;text-align:center;margin-top:18px;color:var(--muted)}.form-error{margin-top:12px;padding:10px;border:1px solid var(--red);border-radius:8px;background:var(--red-dim);color:var(--red);font-size:12px}.app-shell{min-height:100vh}.topbar{height:58px;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:30}.topbar-left,.topbar-right{gap:12px}.status-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;border-radius:999px;padding:4px 9px;border:1px solid var(--border);color:var(--sub)}.status-badge.online{color:var(--green);border-color:var(--green);background:var(--green-dim)}.status-badge.offline{color:var(--red);border-color:var(--red);background:var(--red-dim)}.status-badge.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-dim)}.live-dot{width:6px;height:6px;background:currentColor;border-radius:50%;animation:blink 1.4s infinite}@keyframes blink{50%{opacity:.25}}.clock{font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}.user-pill{gap:8px;padding:4px 11px 4px 4px;border:1px solid var(--border);background:var(--card);border-radius:999px;font-size:12px}.avatar{width:27px;height:27px;border-radius:50%;background:var(--accent);display:grid;place-items:center;color:white;font-size:10px;font-weight:800}.btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--sub);text-decoration:none;font-size:12px}.btn-secondary:hover{border-color:var(--accent);color:var(--accent)}.btn-secondary.danger:hover{border-color:var(--red);color:var(--red)}.nav-tabs{height:46px;background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;gap:4px}.nav-tab{padding:0 18px;background:transparent;color:var(--muted);font-size:13px;font-weight:700;border-bottom:2px solid transparent}.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}.page{display:none}.page.active{display:block}.dashboard-body{max-width:1420px;margin:auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:20px}.stats-row{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.stat-card,.panel,.iot-stats article{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}.stat-card{padding:18px;display:flex;align-items:center;gap:14px}.stat-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:22px}.stat-icon.blue{background:var(--accent-dim);color:var(--accent)}.stat-icon.red{background:var(--red-dim);color:var(--red)}.stat-icon.green{background:var(--green-dim);color:var(--green)}.stat-icon.warn{background:var(--warn-dim);color:var(--warn)}.stat-card span,.iot-stats span{display:block;color:var(--sub);font-size:12px;margin-bottom:4px}.stat-card strong,.iot-stats strong{font-size:25px}.left-column{display:flex;flex-direction:column;gap:20px}.panel{padding:20px}.panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px}.panel-header h2{font-size:14px;display:flex;align-items:center;gap:8px}.panel-header h2 i{color:var(--accent);font-size:17px}.panel-header p{font-size:11px;color:var(--muted);margin-top:3px}.icon-button{width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--sub)}.icon-button:hover{color:var(--accent);border-color:var(--accent)}.spaces-grid{display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:10px}.space-cell{min-height:88px;border-radius:11px;border:1.5px solid;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}.space-cell strong{font-size:19px}.space-cell span{font-size:11px;opacity:.78}.space-cell.free{border-color:var(--green);background:var(--green-dim);color:var(--green)}.space-cell.occupied{border-color:var(--red);background:var(--red-dim);color:var(--red)}.space-cell.reserved{border-color:var(--warn);background:var(--warn-dim);color:var(--warn)}.space-cell.maintenance{border-color:var(--muted);background:rgba(85,94,122,.12);color:var(--sub)}.space-cell .dot{position:absolute;top:8px;right:8px;width:6px;height:6px;border-radius:50%;background:currentColor}.camera-panel{height:280px;background:#070910;border-radius:12px;position:relative;overflow:hidden;display:grid;place-items:center}.camera-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(79,142,247,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(79,142,247,.05) 1px,transparent 1px);background-size:30px 30px}.camera-empty{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--muted);text-align:center;max-width:350px}.camera-empty i{font-size:35px}.camera-empty strong{color:var(--sub)}.camera-empty span{font-size:11px;line-height:1.5}.camera-footer{position:absolute;left:0;right:0;bottom:0;padding:7px 11px;background:rgba(0,0,0,.6);display:flex;justify-content:space-between;color:var(--sub);font-family:monospace;font-size:10px}.vehicles-panel{min-height:400px}.vehicle-list{max-height:650px;overflow:auto}.vehicle-item{padding:13px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px}.vehicle-item:last-child{border-bottom:0}.vehicle-space{width:36px;height:36px;border-radius:9px;border:1px solid var(--red);background:var(--red-dim);color:var(--red);display:grid;place-items:center;font-weight:800}.vehicle-info{flex:1;min-width:0}.vehicle-info strong{display:block;color:var(--accent);font-family:monospace;font-size:13px}.vehicle-info span{display:block;color:var(--sub);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vehicle-time{text-align:right}.vehicle-time strong{display:block;font-size:12px}.vehicle-time span{font-size:10px;color:var(--muted)}.empty-state{grid-column:1/-1;padding:28px;text-align:center;color:var(--muted);font-size:12px}.sensors-layout{max-width:1420px;margin:auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:20px}.sensors-main{display:flex;flex-direction:column;gap:20px}.iot-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.iot-stats article{padding:16px}.devices-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.device-card{border:1px solid var(--border);background:var(--bg);border-radius:12px;padding:15px}.device-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:11px}.device-head strong{font-size:13px}.device-head span{font-size:10px;color:var(--muted)}.device-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--sub)}.device-meta b{display:block;color:var(--text);font-weight:600;margin-top:2px}.logs-panel{position:sticky;top:124px;max-height:calc(100vh - 145px);overflow:hidden}.iot-logs{max-height:calc(100vh - 230px);overflow:auto}.log-entry{padding:10px 0;border-bottom:1px solid var(--border)}.log-entry:last-child{border-bottom:0}.log-entry header{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}.log-entry strong{font-size:11px}.log-entry time{font-size:9px;color:var(--muted);font-family:monospace}.log-entry p{font-size:11px;color:var(--sub);line-height:1.45}.toast-container{position:fixed;right:20px;bottom:20px;z-index:100;display:flex;flex-direction:column;gap:8px}.toast{min-width:260px;padding:12px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--border);box-shadow:0 12px 35px rgba(0,0,0,.35);font-size:12px}.toast.success{border-color:var(--green)}.toast.error{border-color:var(--red)}@media(max-width:1000px){.dashboard-body,.sensors-layout{grid-template-columns:1fr}.vehicles-panel,.logs-panel{position:static}.stats-row,.iot-stats{grid-template-columns:repeat(2,1fr)}.topbar-right .clock,.user-pill{display:none}}@media(max-width:650px){.topbar{height:auto;min-height:58px;padding:10px 14px}.topbar-left .status-badge,.btn-secondary[href]{display:none}.nav-tabs{padding:0 10px}.dashboard-body,.sensors-layout{padding:14px}.stats-row,.iot-stats{grid-template-columns:1fr 1fr}.spaces-grid{grid-template-columns:repeat(2,1fr)}.devices-grid{grid-template-columns:1fr}.camera-footer{gap:6px;flex-wrap:wrap}.stat-card strong{font-size:20px}}
+
+/* Modo integrado dentro del panel administrativo principal. */
+body.embed-mode{
+  min-height:0;
+  background:#0f1117;
+  overflow:hidden;
+}
+body.embed-mode .login-screen,
+body.embed-mode .topbar,
+body.embed-mode .nav-tabs{
+  display:none!important;
+}
+body.embed-mode .app-shell,
+body.embed-mode main{
+  min-height:0;
+}
+body.embed-mode .page{
+  display:none;
+}
+body.embed-mode .page.active{
+  display:block;
+}
+body.embed-mode .dashboard-body{
+  max-width:none;
+  margin:0;
+  padding:16px;
+}
+body.embed-mode .sensor-page-wrap{
+  max-width:none;
+  margin:0;
+  padding:16px;
+}
+body.embed-mode .toast-container{
+  right:14px;
+  bottom:14px;
+}
+@media(max-width:650px){
+  body.embed-mode .dashboard-body,
+  body.embed-mode .sensor-page-wrap{
+    padding:10px;
+  }
+}
+
+/* Dashboard sin cámara: espacios y vehículos adaptables. */
+body.embed-dashboard .dashboard-body{align-items:start}
+body.embed-dashboard .left-column>.panel{height:100%}
+@media(max-width:1000px){body.embed-dashboard .dashboard-body{grid-template-columns:1fr}}
+
+/* Tema claro/oscuro sincronizado con el panel principal */
+:root[data-theme="light"]{--bg:#f4f7fb;--surface:#ffffff;--card:#ffffff;--border:#d8e0ef;--accent:#2563eb;--accent-dim:rgba(37,99,235,.12);--green:#0f9f6e;--green-dim:rgba(15,159,110,.12);--red:#dc2626;--red-dim:rgba(220,38,38,.12);--warn:#d97706;--warn-dim:rgba(217,119,6,.12);--purple:#7c3aed;--purple-dim:rgba(124,58,237,.12);--text:#172033;--sub:#4b5875;--muted:#7b879f}
+:root[data-theme="light"] body{background:var(--bg);color:var(--text)}
+:root[data-theme="light"] input,:root[data-theme="light"] select{background:#fff;color:var(--text);border-color:var(--border)}
+:root[data-theme="light"] .camera-panel{background:#eef3fb}
+:root[data-theme="light"] .camera-grid{background-image:linear-gradient(rgba(37,99,235,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(37,99,235,.08) 1px,transparent 1px)}
+:root[data-theme="light"] .camera-footer{background:rgba(255,255,255,.86);color:var(--sub)}
+.rfid-grid-three{grid-template-columns:1fr 1fr 1.1fr}
+.sensor-page-wrap.manual-locked .manual-control{opacity:.45;cursor:not-allowed;filter:grayscale(.25)}
+@media(max-width:1180px){.rfid-grid-three{grid-template-columns:1fr 1fr}.rfid-grid-three .rfid-card:last-child{grid-column:1/-1}}
+@media(max-width:760px){.rfid-grid-three{grid-template-columns:1fr}.rfid-grid-three .rfid-card:last-child{grid-column:auto}}
+
+/* === Dashboard operativo conectado con sensores en vivo === */
+.space-cell.paid{border-color:var(--accent);background:var(--accent-dim);color:var(--accent)}
+.space-cell.incident{border-color:var(--warn);background:var(--warn-dim);color:var(--warn)}
+.space-cell .space-plate{font-family:Consolas,monospace;font-size:15px;letter-spacing:.08em;color:var(--text);line-height:1;background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.08);padding:5px 8px;border-radius:7px;min-width:54px;text-align:center}
+.space-cell.free .space-plate{color:var(--green)}
+.space-cell.occupied .space-plate{color:var(--red)}
+.space-cell.paid .space-plate{color:var(--accent)}
+.space-cell.incident .space-plate{color:var(--warn)}
+.vehicle-item .vehicle-space{font-family:Consolas,monospace}
